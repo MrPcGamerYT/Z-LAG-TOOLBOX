@@ -42,14 +42,36 @@ test('isElevated resolves a boolean on every platform', async () => {
 });
 
 // ------------------------------------------------------- backup / rollback
-test('backup and restore-point helpers are safe no-ops off Windows', async () => {
-  const b = await backupDrivers({ log: [] });
-  assert.equal(b.ok, true);
-  assert.equal(b.demo, true);
-  const rp = await createRestorePoint();
-  assert.equal(rp.ok, true);
-  const rb = await rollbackDevice({ deviceId: 'PCI\\VEN_8086&DEV_1912' });
-  assert.equal(rb.ok, true);
+/**
+ * backupDrivers / createRestorePoint / rollbackDevice MUTATE THE HOST on
+ * Windows: they export the whole driver store, create a real restore point,
+ * and disable/re-enable a device. CI runs on windows-latest, so calling them
+ * unguarded exported every driver on the build agent and tried to disable
+ * hardware on it. Never invoke them from a test on Windows — assert the
+ * off-Windows contract only, and check the guard itself everywhere else.
+ */
+const IS_WIN = process.platform === 'win32';
+
+test('backup and restore-point helpers are safe no-ops off Windows',
+  { skip: IS_WIN ? 'mutates the host on Windows — covered by the guard test' : false },
+  async () => {
+    const b = await backupDrivers({ log: [] });
+    assert.equal(b.ok, true);
+    assert.equal(b.demo, true);
+    const rp = await createRestorePoint();
+    assert.equal(rp.ok, true);
+    const rb = await rollbackDevice({ deviceId: 'PCI\\VEN_8086&DEV_1912' });
+    assert.equal(rb.ok, true);
+  });
+
+test('every host-mutating driver helper is guarded by a platform check', () => {
+  // A static guarantee that works on any platform without executing anything:
+  // each of these must bail out before touching the system when not on
+  // Windows. If someone removes a guard, this fails on Linux CI immediately.
+  for (const fn of [backupDrivers, createRestorePoint, rollbackDevice]) {
+    assert.match(String(fn), /if\s*\(\s*!\s*IS_WINDOWS\s*\)\s*return/,
+      fn.name + ' must return early when not running on Windows');
+  }
 });
 
 test('a job exposes its safety state to the UI', () => {
