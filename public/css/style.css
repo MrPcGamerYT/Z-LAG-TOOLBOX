@@ -1034,6 +1034,12 @@ body.desktop .sidebar {
   background: rgba(232, 121, 249, 0.16); color: var(--pink); border: 1px solid rgba(232, 121, 249, 0.35);
 }
 .driver-row .tags { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex: 0 0 auto; }
+/* Per-device install button: visible on hover/focus, always on touch. */
+.driver-row .drv-one { opacity: 0; transition: opacity .12s ease; }
+.driver-row:hover .drv-one,
+.driver-row:focus-within .drv-one,
+.driver-row .drv-one:disabled { opacity: 1; }
+@media (hover: none) { .driver-row .drv-one { opacity: 1; } }
 .driver-more { text-align: center; padding: 14px; }
 
 @media (max-width: 700px) {
@@ -1096,6 +1102,14 @@ h2.with-ico .ico { width: 19px; height: 19px; color: var(--violet-3); }
   display: flex; gap: 11px; align-items: flex-start;
 }
 .banner.info-note .banner-ico { color: var(--info); }
+/* Blocking condition the user must fix (no admin rights, no disk space). */
+.banner.danger-note {
+  background: rgba(248, 113, 113, 0.10); border: 1px solid rgba(248, 113, 113, 0.34);
+  color: #f8d4d4; border-radius: var(--radius-sm);
+  padding: 14px 16px; font-size: 12.5px; line-height: 1.6;
+  display: flex; gap: 11px; align-items: flex-start;
+}
+.banner.danger-note .banner-ico { color: var(--danger); }
 
 /* buttons */
 .btn > .ico { width: 15px; height: 15px; flex: 0 0 15px; }

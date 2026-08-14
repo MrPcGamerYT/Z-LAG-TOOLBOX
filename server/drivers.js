@@ -37,6 +37,177 @@ const IS_WINDOWS = process.platform === 'win32';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+// =====================================================================
+// PREFLIGHT — refuse to start work that cannot possibly succeed
+// =====================================================================
+/**
+ * pnputil /add-driver /install requires a high-integrity administrator token.
+ * Without one every single install fails at the very end of a long download,
+ * which reads to the user as "the toolbox is broken". Checking up front turns
+ * that into one clear, actionable sentence before anything is downloaded.
+ */
+async function isElevated() {
+  if (!IS_WINDOWS) return true;
+  const script = '[bool]([Security.Principal.WindowsPrincipal]' +
+    '[Security.Principal.WindowsIdentity]::GetCurrent()' +
+    ').IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)';
+  const r = await runPwsh(script, 20000);
+  return /true/i.test(String(r.stdout || ''));
+}
+
+/** Is there a usable route to the Microsoft Update Catalog right now? */
+async function catalogReachable() {
+  try {
+    await muc.searchCatalog('PCI\\VEN_8086');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Everything the pipeline needs before it promises the user anything:
+ * administrator rights, disk space for the packages, and (for the catalog
+ * engine) network. Local repair still works offline, so a dead network is a
+ * warning rather than a hard stop.
+ */
+async function preflight(opts) {
+  opts = opts || {};
+  const checks = [];
+  const admin = await isElevated();
+  checks.push({
+    id: 'admin',
+    label: 'Administrator rights',
+    ok: admin,
+    fatal: !admin,
+    detail: admin
+      ? 'Running elevated — drivers can be installed.'
+      : 'Z-LAG Toolbox is not running as administrator. Windows blocks driver ' +
+        'installation for standard users. Close the app and choose "Run as administrator".'
+  });
+
+  const free = await freeDiskBytes();
+  const needed = Number(opts.requiredBytes) || 0;
+  // Driver packages extract to roughly twice their download size, plus room
+  // for the driver store copy. 2 GB is a comfortable floor.
+  const floor = Math.max(2 * 1024 * 1024 * 1024, needed * 3);
+  const spaceOk = free == null || free >= floor;
+  checks.push({
+    id: 'disk',
+    label: 'Free disk space',
+    ok: spaceOk,
+    fatal: !spaceOk,
+    detail: free == null
+      ? 'Could not read free space — continuing.'
+      : Math.round(free / 1073741824 * 10) / 10 + ' GB free on the system drive.'
+  });
+
+  let network = true;
+  if (opts.checkNetwork !== false) {
+    network = await catalogReachable();
+    checks.push({
+      id: 'network',
+      label: 'Microsoft Update Catalog',
+      ok: network,
+      fatal: false, // local repair still works offline
+      detail: network
+        ? 'Reachable — driver packages can be downloaded.'
+        : 'Unreachable. Local repair from the Windows driver store will still run, ' +
+          'but nothing can be downloaded until the connection is back.'
+    });
+  }
+
+  const blocking = checks.filter((c) => c.fatal);
+  return {
+    ok: blocking.length === 0,
+    admin,
+    network,
+    checks,
+    blockers: blocking.map((c) => c.detail)
+  };
+}
+
+/** Free bytes on the Windows system drive, or null when unknown. */
+async function freeDiskBytes() {
+  if (!IS_WINDOWS) return null;
+  const r = await runPwsh(
+    '(Get-PSDrive -Name ($env:SystemDrive.TrimEnd(":"))).Free', 20000);
+  const n = Number(String(r.stdout || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// =====================================================================
+// BACKUP / ROLLBACK — never change a driver without an escape route
+// =====================================================================
+/**
+ * Export every third-party driver currently installed to a timestamped
+ * folder, and create a system restore point. A bad GPU driver can leave a
+ * machine with no display, so this runs once before the first install of any
+ * job. `pnputil /export-driver *` is the supported, offline way to do it.
+ */
+async function backupDrivers(job) {
+  if (!IS_WINDOWS) return { ok: true, demo: true, folder: '' };
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const folder = path.join(process.env.ProgramData || 'C:\\ProgramData',
+    'Z-LAG Toolbox', 'driver-backups', stamp);
+  try { fs.mkdirSync(folder, { recursive: true }); }
+  catch (e) { return { ok: false, error: 'Could not create the backup folder: ' + e.message }; }
+
+  const r = await muc.runExe('pnputil.exe', ['/export-driver', '*', folder],
+    { timeout: 10 * 60 * 1000, job });
+  let count = 0;
+  try { count = fs.readdirSync(folder).length; } catch (_) {}
+  return {
+    ok: r.ok || count > 0,
+    folder,
+    count,
+    error: (r.ok || count > 0) ? '' : String(r.stderr || r.stdout || 'pnputil export failed').slice(0, 200)
+  };
+}
+
+/** Create a Windows system restore point. Best-effort: never blocks a job. */
+async function createRestorePoint() {
+  if (!IS_WINDOWS) return { ok: true, demo: true };
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    'try {',
+    "  Enable-ComputerRestore -Drive $env:SystemDrive",
+    // Windows rate-limits restore points to one per 24h unless this is cleared.
+    "  New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore'" +
+      " -Name 'SystemRestorePointCreationFrequency' -Value 0 -PropertyType DWord -Force | Out-Null",
+    "  Checkpoint-Computer -Description 'Z-LAG Toolbox driver update' -RestorePointType MODIFY_SETTINGS",
+    "  'created'",
+    '} catch { $_.Exception.Message }'
+  ].join('\n');
+  const r = await runPwsh(script, 5 * 60 * 1000);
+  const out = String(r.stdout || '').trim();
+  return { ok: /created/i.test(out), detail: out.slice(0, 200) };
+}
+
+/**
+ * Roll one device back to its previous driver. Used when a freshly installed
+ * driver leaves the device in an error state.
+ */
+async function rollbackDevice(device) {
+  if (!IS_WINDOWS) return { ok: true, demo: true };
+  const id = String(device.deviceId || device.id || '').replace(/'/g, "''");
+  if (!id) return { ok: false, error: 'no device id' };
+  const script = [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    "$d = Get-CimInstance Win32_PnPEntity -Filter (\"DeviceID='\" + '" + id + "' + \"'\")",
+    'if (-not $d) { "not-found" } else {',
+    // Disable + re-enable forces Windows to re-evaluate the driver ranking and
+    // fall back to the previously staged package.
+    '  Disable-PnpDevice -InstanceId $d.DeviceID -Confirm:$false -ErrorAction SilentlyContinue',
+    '  Start-Sleep -Seconds 2',
+    '  Enable-PnpDevice -InstanceId $d.DeviceID -Confirm:$false -ErrorAction SilentlyContinue',
+    '  "rolled-back"',
+    '}'
+  ].join('\n');
+  const r = await runPwsh(script, 2 * 60 * 1000);
+  return { ok: /rolled-back/i.test(String(r.stdout || '')), detail: String(r.stdout || '').trim() };
+}
+
 // -------------------------------------------------------------- powershell
 function powershellPath() {
   if (!IS_WINDOWS) return 'powershell';
@@ -406,6 +577,36 @@ function isMicrosoftProvider(vendor) {
 /** True when a vendor name belongs to a chip maker that ships real drivers. */
 function isSiliconVendor(vendor) {
   return SILICON_VENDORS.test(String(vendor || '').trim());
+}
+
+/**
+ * Vendors whose hardware Windows drives with its OWN driver by design, so a
+ * Microsoft provider is correct and there is no third-party package to want.
+ * Everything else that is not Microsoft is assumed to have a vendor driver.
+ */
+const INBOX_BY_DESIGN = /^(microsoft|standard|generic|unknown|\(standard)/i;
+
+/**
+ * Should we look for a vendor driver to replace the Microsoft inbox one?
+ *
+ * The named-vendor allowlist (isSiliconVendor) only covers silicon we could
+ * enumerate by PCI id. That left a long tail — older or rarer chipsets, NICs
+ * and storage controllers — permanently invisible. Any device with a real
+ * PCI/USB vendor id that is NOT Microsoft's own gets probed instead: if the
+ * catalog has nothing, the scan simply finds no offer and the device stays
+ * quiet, which is the correct outcome either way.
+ */
+function wantsVendorDriver(device) {
+  const known = String(device.hardwareVendor || '').trim();
+  if (known) return !INBOX_BY_DESIGN.test(known);
+  // No name for the vendor id, but the id itself proves third-party silicon.
+  const ids = (device.hwids || []).concat(device.compatIds || [], [device.deviceId || '']);
+  for (const id of ids) {
+    const m = /(?:VEN_|VID_)([0-9a-f]{4})/i.exec(String(id));
+    // 1414 is Microsoft's own vendor id (Hyper-V synthetic devices).
+    if (m && m[1].toLowerCase() !== '1414') return true;
+  }
+  return false;
 }
 
 /** Recover the physical vendor hidden behind a generic Microsoft driver. */
@@ -1098,10 +1299,12 @@ function normaliseDevice(d, rawSystemInfo) {
   // prioritises it and Update All installs the vendor driver first.
   dev.driverProviderIsMicrosoft = !dev.missing && isMicrosoftProvider(dev.driverProvider);
   dev.vendorDriverWanted = !dev.pseudo && catalogEligible && !dev.missing &&
-    dev.driverProviderIsMicrosoft && isSiliconVendor(dev.hardwareVendor);
+    dev.driverProviderIsMicrosoft && wantsVendorDriver(dev);
   if (dev.vendorDriverWanted) {
-    dev.vendorDriverHint = dev.hardwareVendor + ' ships its own driver for this device — ' +
-      'Windows is currently using the built-in Microsoft driver.';
+    dev.vendorDriverHint = (dev.hardwareVendor
+      ? dev.hardwareVendor + ' ships its own driver for this device'
+      : 'This device is third-party hardware with a vendor driver available') +
+      ' — Windows is currently using the built-in Microsoft driver.';
   }
 
   // A generic Microsoft GPU/audio/storage stack is just as actionable as a
@@ -1180,8 +1383,17 @@ async function runWuHints() {
  * job re-uses them without a second round trip.
  */
 const catalogCache = new Map(); // query -> offers[]
-const MAX_CATALOG_SCAN = 12;
+/**
+ * Upper bound on catalog probes per scan. This used to be 12, which silently
+ * hid real driver offers on any machine with more than a dozen actionable
+ * devices — the user saw "up to date" for hardware the catalog knew about.
+ * Devices are probed in install-priority order, so the important ones (GPU,
+ * chipset) are always covered; the cap now only guards against pathological
+ * machines, and anything skipped is reported instead of hidden.
+ */
+const MAX_CATALOG_SCAN = 60;
 let lastScan = null;
+let lastScanSkipped = 0;
 
 /**
  * Circuit breaker: the first network-level failure (offline PC, blocked
@@ -1242,8 +1454,11 @@ async function attachCatalogOffers(devices) {
     // catalog and must be found and preferred.
     .filter((d) => !d.update && d.catalogEligible && !d.pseudo &&
       (d.missing || d.genericDriver || d.vendorDriverWanted ||
-        (d.gaming && d.gaming.key === 'gpu'))))
-    .slice(0, MAX_CATALOG_SCAN);
+        (d.gaming && d.gaming.key === 'gpu'))));
+  // Anything beyond the cap is reported, never silently dropped.
+  const skipped = Math.max(0, candidates.length - MAX_CATALOG_SCAN);
+  if (skipped) lastScanSkipped = skipped;
+  candidates.length = Math.min(candidates.length, MAX_CATALOG_SCAN);
   let used = 0;
   for (const dev of candidates) {
     if (catalogDead) break;
@@ -1322,6 +1537,7 @@ async function scanDrivers() {
     return lastScan;
   }
   catalogDead = false; // retry the catalog on every manual scan
+  lastScanSkipped = 0;
 
   const inv = await runInventory();
   if (!inv.ok) {
@@ -1425,6 +1641,7 @@ async function scanDrivers() {
     wuError: wu.available ? '' : wu.error,
     updatesOffered: updates.length,
     catalogOffered: catalogUsed,
+    catalogSkippedCount: lastScanSkipped,
     systemInfo: inv.systemInfo
   });
   return lastScan;
@@ -1450,6 +1667,11 @@ function publicDriverJob(job) {
     runtimeTotal: job.runtimeTotal,
     runtimeInstalled: job.runtimeInstalled,
     networkFailed: job.networkFailed,
+    rolledBack: job.rolledBack || 0,
+    backupFolder: job.backupFolder || '',
+    restorePoint: !!job.restorePoint,
+    preflight: job.preflight || null,
+    needsElevation: !!job.needsElevation,
     retryable: !!job.retryable,
     retryLabel: job.networkFailed ? 'Retry failed downloads' : 'Retry failed items',
     reboot: job.reboot,
@@ -1516,6 +1738,11 @@ function startUpdateAll(opts) {
     runtimeInstalled: 0,
     failed: 0,
     networkFailed: 0,
+    rolledBack: 0,
+    backupFolder: '',
+    restorePoint: false,
+    preflight: null,
+    needsElevation: false,
     retryable: false,
     reboot: false,
     error: null,
@@ -1528,7 +1755,7 @@ function startUpdateAll(opts) {
     runtimeSnapshot,
     failedDevices: [],
     failedRuntimes: [],
-    options: { onlyMissing: !!opts.onlyMissing },
+    options: { onlyMissing: !!opts.onlyMissing, backup: opts.backup !== false },
     retryOf: opts.retryOf || null
   };
   JOBS.set(job.id, job);
@@ -1743,9 +1970,29 @@ async function installRuntimeTargets(job, runtimes, startPercent) {
  *   C++ game prerequisites after verifying each installer's signature.
  */
 async function realUpdateAll(job) {
-  job.stage = 'repairing';
-  job.percent = 4;
+  job.stage = 'preflight';
+  job.percent = 2;
   catalogDead = false; // a fresh job may retry the catalog connection
+
+  // ---- phase 0: preflight ------------------------------------------------
+  // Fail fast and legibly instead of downloading 400 MB and then discovering
+  // that a standard user cannot install drivers.
+  jlog(job, 'Preflight — checking administrator rights, disk space and connectivity…');
+  const pre = await preflight({});
+  job.preflight = pre;
+  for (const c of pre.checks) jlog(job, (c.ok ? '✓ ' : '✕ ') + c.label + ' — ' + c.detail);
+  if (!pre.ok) {
+    job.status = 'error';
+    job.stage = 'error';
+    job.error = pre.blockers.join(' ');
+    job.needsElevation = !pre.admin;
+    jlog(job, 'ERROR ' + job.error);
+    return;
+  }
+  if (!pre.network) {
+    jlog(job, 'Offline mode — only the local Windows driver store will be used.');
+  }
+  job.percent = 4;
 
   // ---- target list from the live inventory ------------------------------
   jlog(job, 'Reading the device inventory…');
@@ -1816,6 +2063,30 @@ async function realUpdateAll(job) {
     await installRuntimeTargets(job, runtimeTargets, 15);
     finishJob(job);
     return;
+  }
+
+  // ---- phase 0b: backup before touching anything -------------------------
+  // A bad graphics driver can leave a machine with no picture. Export the
+  // current drivers and drop a restore point first, so there is always a way
+  // back. Both are best-effort: a machine with System Restore disabled by
+  // policy should not be blocked from fixing a missing NIC driver.
+  if (job.options.backup !== false && !job.cancelled) {
+    job.stage = 'backup';
+    job.current = 'Backing up current drivers';
+    jlog(job, 'Safety net — exporting the current drivers and creating a restore point…');
+    const backup = await backupDrivers(job);
+    if (backup.ok) {
+      job.backupFolder = backup.folder;
+      jlog(job, '✓ ' + (backup.count || 0) + ' driver package(s) exported to ' + backup.folder);
+    } else {
+      jlog(job, '! Driver export failed (' + backup.error + ') — continuing without it.');
+    }
+    const rp = await createRestorePoint();
+    job.restorePoint = rp.ok;
+    jlog(job, rp.ok
+      ? '✓ System restore point created.'
+      : '! Could not create a restore point (' + rp.detail + ') — continuing.');
+    job.percent = 12;
   }
 
   // ---- phase 1a: pure re-enumeration fixes a lot of code 28s -------------
@@ -1919,12 +2190,33 @@ async function realUpdateAll(job) {
     if (inst.rebootRequired) job.reboot = true;
 
     if (inst.ok) {
-      job.installed++;
-      job.items.push({
-        title: dev.name, ok: true, engine: 'catalog',
-        detail: acq.offer ? acq.offer.title : 'installed from the Update Catalog'
-      });
-      jlog(job, '✓ ' + dev.name + ' — installed');
+      // Trusting pnputil's exit code alone is how a machine ends up with a
+      // black screen and a "success" report. Confirm the device is actually
+      // healthy afterwards, and undo the change if it is not.
+      const after = (await verifyDevices([dev])).get(dev.deviceId);
+      const broke = after && after.present && after.error !== 0;
+      if (broke) {
+        jlog(job, '! ' + dev.name + ' reported problem code ' + after.error +
+          ' after the install — rolling back…');
+        const rb = await rollbackDevice(dev);
+        job.failed++;
+        job.rolledBack++;
+        job.failedDevices.push(dev);
+        job.items.push({
+          title: dev.name, ok: false, engine: 'catalog',
+          detail: 'the new driver left the device in error state ' + after.error +
+            (rb.ok ? ' — rolled back to the previous driver' : ' — automatic rollback failed')
+        });
+        jlog(job, (rb.ok ? '↩ ' : '✕ ') + dev.name +
+          (rb.ok ? ' — rolled back to the previous driver' : ' — rollback failed, restore point available'));
+      } else {
+        job.installed++;
+        job.items.push({
+          title: dev.name, ok: true, engine: 'catalog',
+          detail: acq.offer ? acq.offer.title : 'installed from the Update Catalog'
+        });
+        jlog(job, '✓ ' + dev.name + ' — installed and verified healthy');
+      }
     } else {
       // pnputil said no; verify by looking at the device — a staged driver can
       // still have attached even when the console output is ambiguous.
@@ -1992,6 +2284,11 @@ async function demoUpdateAll(job) {
 module.exports = {
   scanDrivers,
   startUpdateAll,
+  preflight,
+  isElevated,
+  backupDrivers,
+  createRestorePoint,
+  rollbackDevice,
   retryDriverJob,
   getDriverJob,
   cancelDriverJob,
@@ -2005,6 +2302,7 @@ module.exports = {
   vendorFromHardwareIds,
   isMicrosoftProvider,
   isSiliconVendor,
+  wantsVendorDriver,
   offerIsFromVendor,
   devicePriority,
   sortByInstallPriority,
