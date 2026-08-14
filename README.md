@@ -27,6 +27,16 @@ customization tweaks.
 - Recovers the physical NVIDIA, AMD, or Intel GPU identity from PCI IDs and
   `Win32_VideoController`; CPU identity is shown only as a safe vendor hint
   when Windows exposes no usable GPU hardware ID.
+- **Replaces Microsoft inbox drivers with the real vendor package.** On a fresh
+  Windows install, Windows binds its own driver (provider “Microsoft
+  Corporation”) to integrated graphics, chipset, network and storage devices.
+  The device works, so it is neither missing nor a generic fallback — but the
+  genuine Intel/AMD/Realtek package is available. Those devices are detected,
+  prioritised, and the vendor package is preferred over any Microsoft one.
+- Vendor packages always outrank Microsoft packages in catalog selection, even
+  when the Microsoft entry is dated newer, because inbox version numbers
+  (`10.0.x`, the Windows build) are not comparable with vendor schemes
+  (`31.0.101.x`).
 - Compares physical display adapters with the newest compatible Microsoft
   Update Catalog package, even when Windows Update is disabled.
 - Filters Windows bookkeeping/software nodes so they are not reported as
@@ -39,6 +49,27 @@ customization tweaks.
   hardened Windows installations.
 - Shows per-device progress, a gaming-readiness summary, and a retry action for
   failed network downloads.
+
+#### Safety and reliability
+
+- **Preflight checks** run before anything is downloaded: administrator
+  rights, free disk space, and catalog reachability. Missing administrator
+  rights is reported as a clear message up front instead of an install failure
+  after a long download. A missing network is a warning only — local repair
+  from the Windows driver store still runs offline.
+- **Backup before install.** Every job exports the current third-party drivers
+  with `pnputil /export-driver` to
+  `%ProgramData%\Z-LAG Toolbox\driver-backups\<timestamp>` and creates a system
+  restore point before the first change.
+- **Post-install health verification with automatic rollback.** A driver that
+  installs “successfully” but leaves the device in an error state is detected
+  and rolled back automatically, rather than being reported as a success. This
+  matters most for graphics drivers, where a bad install means no display.
+- **Install ordering.** Missing drivers first, then generic Microsoft stacks,
+  then Microsoft-inbox-to-vendor replacements, then ordinary updates — with
+  graphics and chipset ahead of peripherals in every band.
+- **Per-device installs.** Any single device can be updated on its own instead
+  of running the full batch.
 
 ### 151 tweaks and presets
 

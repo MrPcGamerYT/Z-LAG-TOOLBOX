@@ -511,6 +511,13 @@ $('#btnScan').addEventListener('click', async (e) => {
   }
   state.scanDevices = r.devices || [];
   state.scanResult = r;
+  // Learn whether this machine can actually install anything, so the scan
+  // result can warn about missing admin rights before the user commits to a
+  // long download. Never let a preflight failure break the scan render.
+  try {
+    const pf = await api('/api/drivers/preflight');
+    state.driverPreflight = (pf && pf.preflight) || null;
+  } catch (_) { state.driverPreflight = null; }
   renderScan(r);
 });
 
@@ -686,6 +693,15 @@ function driverRowHtml(d) {
           '</span></div>'
         : ''));
 
+  // Per-device install. Professional driver tools never force an all-or-
+  // nothing run: a user who only wants the GPU driver should not have to
+  // install eight other packages to get it.
+  const canInstallOne = d.needsUpdate && d.installable !== false;
+  const oneBtn = canInstallOne
+    ? '<button class="btn btn-sm drv-one" data-device-id="' + esc(d.id || d.deviceId) + '">' +
+      'Install' + '</button>'
+    : '';
+
   return '<div class="driver-row">' +
     '<div class="driver-ico ' + rowCls + '">' + icon(rowIcon) + '</div>' +
     '<div class="driver-info">' +
@@ -693,7 +709,7 @@ function driverRowHtml(d) {
       '<div class="sub">' + esc(d.vendor || 'Unknown vendor') + ' · ' + esc(d.class || 'Unknown') + ' · ' + detail + '</div>' +
       identity + offer + unresolvable +
     '</div>' +
-    '<div class="tags">' + game + badge + '</div>' +
+    '<div class="tags">' + game + badge + oneBtn + '</div>' +
   '</div>';
 }
 
@@ -725,6 +741,30 @@ function renderDriverList(reset) {
 
   const more = $('#btnDriverMore');
   if (more) more.onclick = () => { state.driverShown = shown + DRIVER_PAGE; renderDriverList(false); };
+
+  // Wire the per-device "Install" buttons to a single-target job.
+  wrap.querySelectorAll('.drv-one').forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.getAttribute('data-device-id');
+      const device = (state.scanResult && state.scanResult.devices || [])
+        .find((x) => String(x.id || x.deviceId) === id);
+      if (!device) return;
+      btn.disabled = true;
+      btn.textContent = 'Starting…';
+      const r = await api('/api/drivers/update-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targets: [device], runtimes: [] })
+      });
+      if (!r.ok || !r.job) {
+        btn.disabled = false;
+        btn.textContent = 'Install';
+        toast(r.error || 'Could not start the install', 'error');
+        return;
+      }
+      activateDriverJob(r.job);
+    };
+  });
 }
 
 function renderScan(r) {
@@ -789,6 +829,32 @@ function renderScan(r) {
     '<div class="stat grad-pink"><span class="n">' + missing.length + '</span><span class="l">missing drivers</span></div>' +
     '<div class="stat grad-green"><span class="n">' + healthy.length + '</span><span class="l">up to date</span></div>';
   area.appendChild(stats);
+
+  // Not being an administrator is THE most common reason a driver install
+  // fails, and it fails silently at the very last step. Say it up front,
+  // before the user waits through a long download.
+  if (state.driverPreflight && state.driverPreflight.admin === false) {
+    const warn = document.createElement('div');
+    warn.className = 'banner danger-note';
+    warn.style.marginTop = '14px';
+    warn.innerHTML = icon('i-warn', 'banner-ico') +
+      '<span><b>Not running as administrator.</b> Windows blocks driver installation ' +
+      'for standard users, so scanning works but installing will fail. ' +
+      'Close Z-LAG Toolbox and reopen it with <b>Run as administrator</b>.</span>';
+    area.appendChild(warn);
+  }
+
+  // Devices the catalog probe could not reach this pass. Previously these
+  // were silently dropped and reported as "up to date".
+  if (r.catalogSkippedCount) {
+    const note = document.createElement('div');
+    note.className = 'banner info-note';
+    note.style.marginTop = '14px';
+    note.innerHTML = icon('i-info', 'banner-ico') +
+      '<span>' + r.catalogSkippedCount + ' additional device(s) were not checked against the ' +
+      'catalog in this pass. Run the scan again after updating to cover them.</span>';
+    area.appendChild(note);
+  }
 
   // Being unable to reach Windows Update is NORMAL on Z-LAG OS — the catalog
   // engine covers missing drivers regardless. This note is informational.
@@ -1028,8 +1094,10 @@ function reopenDriverJob() {
 }
 
 function paintDriverJob(job) {
-  const stages = ['repairing', 'searching', 'downloading', 'installing', 'runtimes', 'done'];
+  const stages = ['preflight', 'backup', 'repairing', 'searching', 'downloading',
+    'installing', 'runtimes', 'done'];
   const labels = {
+    preflight: 'Check', backup: 'Backup',
     repairing: 'Repair', searching: 'Find', downloading: 'Download', installing: 'Install',
     runtimes: 'Game runtimes', done: 'Done'
   };
@@ -1047,6 +1115,8 @@ function paintDriverJob(job) {
     job.runtimeInstalled ? job.runtimeInstalled + ' runtime(s) installed' : '',
     job.failed ? job.failed + ' unresolved' : '',
     job.networkFailed ? job.networkFailed + ' network failure(s)' : '',
+    job.rolledBack ? job.rolledBack + ' rolled back' : '',
+    job.restorePoint ? 'restore point created' : '',
     job.reboot ? 'restart required' : '',
     job.mode === 'demo' ? 'demo pipeline' : 'no Windows Update needed'
   ].filter(Boolean).join('  ·  '));

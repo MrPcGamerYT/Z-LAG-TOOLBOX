@@ -536,9 +536,22 @@ async function dispatch(method, pathname, query, body) {
   if (method === 'POST' && pathname === '/api/drivers/scan') {
     return { status: 200, body: await scanDrivers() };
   }
+  // Can this machine install drivers at all? The UI calls this before showing
+  // the update button so a standard user is told up front, not after a
+  // 400 MB download fails at the last step.
+  if (method === 'GET' && pathname === '/api/drivers/preflight') {
+    return ok({ preflight: await driverCenter.preflight({ checkNetwork: true }) });
+  }
   // Install / update every missing or outdated driver in one background job.
   if (method === 'POST' && pathname === '/api/drivers/update-all') {
-    const job = driverCenter.startUpdateAll({ onlyMissing: !!body.onlyMissing });
+    const job = driverCenter.startUpdateAll({
+      onlyMissing: !!body.onlyMissing,
+      // Callers may opt out of the backup, but it is on by default.
+      backup: body.backup !== false,
+      // Explicit device selection from the UI ("install just this one").
+      targets: Array.isArray(body.targets) ? body.targets : undefined,
+      runtimes: Array.isArray(body.runtimes) ? body.runtimes : undefined
+    });
     return ok({ jobId: job.id, job: driverCenter.publicDriverJob(job) });
   }
   if (method === 'POST' && /^\/api\/drivers\/jobs\/[^/]+\/cancel$/.test(pathname)) {
