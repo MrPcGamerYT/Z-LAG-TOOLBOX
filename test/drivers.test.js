@@ -311,3 +311,146 @@ test('driver network failures are marked retryable', () => {
   assert.equal(isDriverNetworkFailure('catalog-down', 'offline'), true);
   assert.equal(isDriverNetworkFailure('install-failed', 'pnputil rejected the INF'), false);
 });
+
+// ==========================================================================
+// FRESH-WINDOWS REGRESSION — "it installs the Microsoft driver instead of the
+// Intel/AMD one that is actually available"
+// --------------------------------------------------------------------------
+// Reported on an Intel Core i3 6th gen with no discrete GPU. On a clean
+// install Windows binds its OWN inbox driver (provider "Microsoft
+// Corporation") to the Intel HD Graphics 530 iGPU and to the chipset devices.
+// The device works, so it was neither "missing" nor the Basic Display
+// Adapter — and the scanner therefore called it up to date and never offered
+// the real Intel package that the catalog has. These tests pin the fix.
+// ==========================================================================
+const {
+  isMicrosoftProvider, isSiliconVendor, offerIsFromVendor,
+  devicePriority, sortByInstallPriority
+} = require('../server/drivers');
+
+test('a Microsoft inbox driver on an Intel iGPU is flagged for the vendor package', () => {
+  const d = normaliseDevice({
+    DeviceID: 'PCI\\VEN_8086&DEV_1912\\3&11583659&0&10',
+    Name: 'Intel(R) HD Graphics 530',
+    Class: 'Display',
+    Vendor: 'Microsoft Corporation',   // inbox driver provider on a fresh install
+    Manufacturer: 'Intel Corporation',
+    Version: '10.0.19041.1',           // Microsoft's build-number scheme
+    ErrorCode: 0,
+    HardwareIDs: ['PCI\\VEN_8086&DEV_1912&SUBSYS_00000000'],
+    CompatIDs: []
+  });
+  assert.equal(d.missing, false, 'the device works — it is not missing');
+  assert.equal(d.hardwareVendor, 'Intel');
+  assert.equal(d.driverProviderIsMicrosoft, true);
+  assert.equal(d.vendorDriverWanted, true,
+    'the Intel package must be offered even though the Microsoft driver works');
+  assert.equal(d.catalogEligible, true);
+});
+
+test('an Intel chipset device on the Microsoft inbox driver is also flagged', () => {
+  const d = normaliseDevice({
+    DeviceID: 'PCI\\VEN_8086&DEV_A123\\3&11583659&0&FC',
+    Name: 'Intel(R) 100 Series Chipset Family SMBus Controller',
+    Class: 'System', Vendor: 'Microsoft', Manufacturer: 'Intel',
+    Version: '10.0.19041.1', ErrorCode: 0,
+    HardwareIDs: ['PCI\\VEN_8086&DEV_A123&SUBSYS_00000000'], CompatIDs: []
+  });
+  assert.equal(d.hardwareVendor, 'Intel');
+  assert.equal(d.vendorDriverWanted, true);
+});
+
+test('a device already on its vendor driver is NOT flagged again', () => {
+  const d = normaliseDevice({
+    DeviceID: 'PCI\\VEN_8086&DEV_1912\\3&11583659&0&10',
+    Name: 'Intel(R) HD Graphics 530',
+    Class: 'Display', Vendor: 'Intel Corporation', Manufacturer: 'Intel',
+    Version: '31.0.101.2115', ErrorCode: 0,
+    HardwareIDs: ['PCI\\VEN_8086&DEV_1912&SUBSYS_00000000'], CompatIDs: []
+  });
+  assert.equal(d.vendorDriverWanted, false, 'the Intel driver is already loaded');
+  assert.equal(d.needsUpdate, false);
+});
+
+test('a Microsoft driver on genuinely Microsoft hardware is left alone', () => {
+  const d = normaliseDevice({
+    DeviceID: 'PCI\\VEN_1414&DEV_008E\\1',
+    Name: 'Microsoft Hyper-V Video',
+    Class: 'Display', Vendor: 'Microsoft', Manufacturer: 'Microsoft',
+    Version: '10.0.19041.1', ErrorCode: 0,
+    HardwareIDs: ['PCI\\VEN_1414&DEV_008E'], CompatIDs: []
+  });
+  assert.equal(d.vendorDriverWanted, false,
+    'Microsoft silicon has no third-party vendor package to prefer');
+});
+
+test('provider and silicon-vendor helpers agree with the fresh-install case', () => {
+  assert.equal(isMicrosoftProvider('Microsoft'), true);
+  assert.equal(isMicrosoftProvider('Microsoft Corporation'), true);
+  assert.equal(isMicrosoftProvider('Intel Corporation'), false);
+  assert.equal(isSiliconVendor('Intel'), true);
+  assert.equal(isSiliconVendor('Realtek'), true);
+  assert.equal(isSiliconVendor('Microsoft'), false);
+});
+
+test('only a genuine vendor catalog offer counts as replacing the Microsoft driver', () => {
+  assert.equal(offerIsFromVendor(
+    { title: 'Intel Corporation - Display - 31.0.101.2115' }, 'Intel'), true);
+  assert.equal(offerIsFromVendor(
+    { title: 'Advanced Micro Devices, Inc. - Display - 31.0.14051.5006' }, 'AMD'), true);
+  // Another Microsoft inbox package is never an upgrade over the current one.
+  assert.equal(offerIsFromVendor(
+    { title: 'Microsoft - Display - 10.0.19041.1' }, 'Intel'), false);
+});
+
+test('graphics and chipset are installed before peripherals, vendor swap before updates', () => {
+  const gpu = { name: 'Intel(R) HD Graphics 530', vendorDriverWanted: true, needsUpdate: true,
+    gaming: { key: 'gpu' } };
+  const chipset = { name: 'Intel SMBus Controller', vendorDriverWanted: true, needsUpdate: true,
+    gaming: { key: 'chipset' } };
+  const mouse = { name: 'Gaming Mouse', needsUpdate: true, gaming: { key: 'input' } };
+  const missingNic = { name: 'Ethernet Controller', missing: true, needsUpdate: true,
+    gaming: { key: 'network' } };
+
+  const order = sortByInstallPriority([mouse, chipset, gpu, missingNic]).map((d) => d.name);
+  assert.deepStrictEqual(order, [
+    'Ethernet Controller',            // missing driver always first
+    'Intel(R) HD Graphics 530',       // then the Microsoft-inbox graphics swap
+    'Intel SMBus Controller',         // then the chipset swap
+    'Gaming Mouse'                    // ordinary updates last
+  ]);
+  assert.ok(devicePriority(gpu) < devicePriority(mouse));
+});
+
+test('the gaming report reports an Intel iGPU on the Microsoft driver as "inbox"', () => {
+  const devices = [{
+    name: 'Intel(R) HD Graphics 530', vendor: 'Microsoft Corporation', class: 'Display',
+    version: '10.0.19041.1', missing: false, needsUpdate: true,
+    vendorDriverWanted: true, hardwareVendor: 'Intel'
+  }];
+  for (const d of devices) d.gaming = gamingRole(d);
+
+  const report = gamingReport(devices);
+  const gpu = report.categories.find((c) => c.key === 'gpu');
+  assert.equal(gpu.state, 'inbox');
+  assert.match(gpu.detail, /built-in Microsoft driver/);
+  assert.match(gpu.advice, /Intel/);
+  assert.equal(report.inboxCount, 1);
+  // The machine still boots and plays — it is not a hard failure.
+  assert.equal(report.ready, true);
+  assert.equal(report.problemCount, 0);
+});
+
+test('a Microsoft inbox driver is a successful replacement once a vendor one is active', () => {
+  const device = {
+    missing: false, genericDriver: false, vendorDriverWanted: true,
+    hardwareVendor: 'Intel', version: '10.0.19041.1', update: {}
+  };
+  assert.equal(driverUpdateIsActive(device, {
+    present: true, error: 0, version: '31.0.101.2115', provider: 'Intel Corporation'
+  }), true);
+  // Still Microsoft's driver afterwards → the install did not take effect.
+  assert.equal(driverUpdateIsActive(device, {
+    present: true, error: 0, version: '10.0.19041.1', provider: 'Microsoft'
+  }), false);
+});

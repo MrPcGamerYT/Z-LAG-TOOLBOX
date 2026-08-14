@@ -991,6 +991,8 @@ body.desktop .sidebar {
 .gcat.ok .gc-state { color: var(--success); }
 .gcat.outdated .gc-state { color: var(--warn); }
 .gcat.generic .gc-state { color: var(--info); }
+/* Working on the Microsoft inbox driver while a vendor package is available. */
+.gcat.inbox .gc-state { color: var(--warn); }
 .gcat.missing .gc-state { color: var(--danger); }
 .gcat.absent .gc-state { color: var(--text-faint); }
 .gcat .gc-detail { font-size: 11.5px; color: var(--text-dim); margin-top: 5px; line-height: 1.5; overflow-wrap: anywhere; }

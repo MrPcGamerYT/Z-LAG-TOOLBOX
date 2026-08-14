@@ -506,11 +506,57 @@ async function acquireDriver(device, opts) {
   return { ok: true, folder: extractDir, offer, fileName: chosen.fileName };
 }
 
+/**
+ * Publisher of a catalog offer. Titles read "Intel Corporation - Display -
+ * 31.0.101.2115", so the text before the first dash is the publisher.
+ */
+function offerPublisher(offer) {
+  const title = String((offer && offer.title) || '');
+  return (title.split(' - ')[0] || title).trim();
+}
+
+/** True when a publisher string is really "Windows' own inbox driver". */
+function isMicrosoftPublisher(name) {
+  return /^(microsoft|microsoft corporation|standard|generic)\b/i.test(String(name || '').trim());
+}
+
+/** Aliases so "AMD" also matches "Advanced Micro Devices", etc. */
+const VENDOR_ALIASES = {
+  amd: /(amd|advanced micro devices|ati technologies)/i,
+  intel: /intel/i,
+  nvidia: /nvidia/i,
+  realtek: /realtek/i,
+  qualcomm: /(qualcomm|atheros)/i,
+  'qualcomm atheros': /(qualcomm|atheros)/i,
+  broadcom: /broadcom/i,
+  marvell: /marvell/i,
+  samsung: /samsung/i,
+  'western digital': /(western digital|sandisk|wdc)/i
+};
+
+function vendorMatchesOffer(vendor, offer) {
+  const v = String(vendor || '').trim().toLowerCase();
+  if (!v) return false;
+  const re = VENDOR_ALIASES[v] ||
+    new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  return re.test(String((offer && offer.title) || ''));
+}
+
 /** Best catalog offer for a device: newest driver for the right OS that also
- *  textually matches the device reasonably well. */
+ *  textually matches the device reasonably well.
+ *
+ *  Publisher matters as much as freshness. On a fresh Windows install the
+ *  catalog happily returns a Microsoft inbox package for an Intel iGPU or
+ *  chipset device; picking that is a no-op that leaves the machine exactly
+ *  where it started. When the device's silicon vendor is known, that vendor's
+ *  package always outranks a Microsoft one. */
 function pickBestOffer(offers, device) {
   if (!offers.length) return null;
   const deviceTokens = tokens(device.name + ' ' + (device.vendor || ''));
+  // The physical silicon vendor recovered from PCI ids (VEN_8086 → Intel),
+  // which is trustworthy even when the loaded driver says "Microsoft".
+  const siliconVendor = String(device.hardwareVendor || '').trim() ||
+    (isMicrosoftPublisher(device.vendor) ? '' : String(device.vendor || '').trim());
   const scored = offers.map((o) => {
     let s = 0;
     const titleTokens = new Set(tokens(o.title + ' ' + o.products));
@@ -521,6 +567,18 @@ function pickBestOffer(offers, device) {
     if (/driver/i.test(o.classification || '')) s += 12;
     if (/x64|amd64|64-bit/i.test(o.title || '')) s += 8;
     if (/^windows$|^windows xp|^windows 7$/i.test((o.products || '').trim())) s -= 15;
+
+    // ---- publisher preference (the fresh-install fix) --------------------
+    const publisher = offerPublisher(o);
+    const fromMicrosoft = isMicrosoftPublisher(publisher);
+    if (siliconVendor && vendorMatchesOffer(siliconVendor, o)) {
+      s += 60;                       // the real Intel / AMD / Realtek package
+    } else if (fromMicrosoft && siliconVendor) {
+      s -= 45;                       // a Microsoft inbox package for vendor silicon
+    } else if (fromMicrosoft) {
+      s -= 10;                       // no known vendor: mildly deprioritise
+    }
+
     const when = Date.parse(o.lastUpdated || '') || 0;
     // Newer years add up to 10 points so fresh drivers win ties.
     s += Math.max(0, Math.min(10, ((when - Date.UTC(2015, 0, 1)) / (365.25 * 864e5))));
@@ -573,9 +631,18 @@ function deviceQueries(device) {
     const short = String(hw).split('&').slice(0, 2).join('&');
     if (short && short !== hw) out.push(short);
   }
+  // The silicon vendor recovered from the PCI id beats the loaded driver's
+  // provider: on a fresh install the provider is "Microsoft", and searching
+  // "Microsoft <device>" only ever finds more Microsoft inbox packages.
+  const silicon = String(device.hardwareVendor || '').trim();
+  if (silicon && !isMicrosoftPublisher(silicon)) {
+    out.push(silicon + ' ' + String(device.name));
+  }
   const vendor = String(device.vendor || '')
     .replace(/\(standard\)/i, '').trim();
-  if (vendor && !/^unknown$/i.test(vendor)) out.push(String(device.name) + ' ' + vendor);
+  if (vendor && !/^unknown$/i.test(vendor) && !isMicrosoftPublisher(vendor)) {
+    out.push(String(device.name) + ' ' + vendor);
+  }
   out.push(String(device.name));
   return dedupe(out.filter((q) => q && q.length >= 3), (q) => q.toLowerCase());
 }
@@ -591,6 +658,9 @@ module.exports = {
   deviceQueries,
   downloadRoot,
   runExe: runTool,
+  offerPublisher,
+  isMicrosoftPublisher,
+  vendorMatchesOffer,
   // exported for tests
   parseSearchPage,
   parseDownloadPage,

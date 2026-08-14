@@ -515,7 +515,10 @@ $('#btnScan').addEventListener('click', async (e) => {
 });
 
 const GSTATE_LABEL = {
-  ok: 'ok', outdated: 'update', generic: 'generic', missing: 'missing', absent: 'not found'
+  ok: 'ok', outdated: 'update', generic: 'generic', missing: 'missing', absent: 'not found',
+  // Working, but on the Microsoft inbox driver while the silicon vendor
+  // (Intel / AMD / Realtek…) ships a real one.
+  inbox: 'Microsoft driver'
 };
 
 const GCAT_ICONS = {
@@ -634,7 +637,12 @@ function driverRowHtml(d) {
   if (d.needsUpdate && d.installable === false) {
     badge = '<span class="badge danger">manual check</span>'; rowIcon = 'i-warn'; rowCls = 'missing';
   } else if (d.missing) { badge = '<span class="badge danger">missing</span>'; rowIcon = 'i-warn'; rowCls = 'missing'; }
-  else if (d.needsUpdate) { badge = '<span class="badge warn">update</span>'; rowIcon = 'i-up'; rowCls = 'update'; }
+  else if (d.vendorDriverWanted) {
+    // Fresh-Windows case: the device works, but on Microsoft's inbox driver
+    // while Intel / AMD / Realtek ship the real one.
+    badge = '<span class="badge warn">' + esc(d.hardwareVendor || 'vendor') + ' driver</span>';
+    rowIcon = 'i-up'; rowCls = 'update';
+  } else if (d.needsUpdate) { badge = '<span class="badge warn">update</span>'; rowIcon = 'i-up'; rowCls = 'update'; }
   else if (d.gaming) { badge = '<span class="badge ok">up to date</span>'; rowIcon = 'i-gamepad'; rowCls = 'gaming'; }
   else { badge = '<span class="badge ok">up to date</span>'; rowIcon = 'i-check-circle'; rowCls = 'ok'; }
   const game = d.gaming ? '<span class="badge game" title="' + esc(d.gaming.label) + '">Gaming</span>' : '';
@@ -659,12 +667,24 @@ function driverRowHtml(d) {
     ? ' · <span class="src">Update Catalog</span>'
     : (d.update && d.update.source === 'windows-update' ? ' · <span class="src">Windows Update hint</span>' : '');
 
+  // Say plainly when a Microsoft driver is about to be replaced by the real
+  // vendor package — that is the whole point of the row being listed.
+  const replacing = d.update && d.update.replacesMicrosoft
+    ? '<div class="sub offer ico-line">' + icon('i-info') +
+      ' <span>Replaces the built-in Microsoft driver with the official ' +
+      esc(d.hardwareVendor || 'vendor') + ' package.</span></div>'
+    : '';
+
   const offer = d.update
     ? '<div class="sub offer ico-line">' + icon('i-up') + ' <span>' + esc(d.update.title) +
-      (d.update.size ? ' · ' + fmtSize(d.update.size) : '') + updateSrc + '</span></div>'
+      (d.update.size ? ' · ' + fmtSize(d.update.size) : '') + updateSrc + '</span></div>' + replacing
     : (d.gaming && d.gaming.generic
       ? '<div class="sub offer ico-line">' + icon('i-warn') + ' <span>Microsoft generic driver — install the ' + esc(d.gaming.vendorHint || 'vendor') + ' driver for full performance</span></div>'
-      : '');
+      : (d.vendorDriverWanted
+        ? '<div class="sub offer ico-line">' + icon('i-warn') + ' <span>' +
+          esc(d.vendorDriverHint || 'A vendor driver is available for this device.') +
+          '</span></div>'
+        : ''));
 
   return '<div class="driver-row">' +
     '<div class="driver-ico ' + rowCls + '">' + icon(rowIcon) + '</div>' +
@@ -735,9 +755,15 @@ function renderScan(r) {
   if (actionable > 0) {
     $('#driverActionTitle').textContent = actionable +
       ' driver / gaming component' + (actionable === 1 ? '' : 's') + ' need attention';
+    const vendorWaiting = devices.filter((d) => d.vendorDriverWanted && d.installable !== false);
     const bits = [];
     if (missing.length) bits.push(missing.length + ' missing driver' + (missing.length === 1 ? '' : 's'));
-    if (updatable.length) bits.push(updatable.length + ' driver update' + (updatable.length === 1 ? '' : 's'));
+    if (vendorWaiting.length) {
+      bits.push(vendorWaiting.length + ' device' + (vendorWaiting.length === 1 ? '' : 's') +
+        ' still on the Microsoft driver');
+    }
+    const plainUpdates = updatable.length - vendorWaiting.length;
+    if (plainUpdates > 0) bits.push(plainUpdates + ' driver update' + (plainUpdates === 1 ? '' : 's'));
     if (runtimeMissing.length) bits.push(runtimeMissing.length + ' gaming runtime' + (runtimeMissing.length === 1 ? '' : 's'));
     const totalBytes = devices.reduce((sum, d) => sum + ((d.update && d.update.size) || 0), 0);
     $('#driverActionSub').textContent = bits.join(' · ') +
