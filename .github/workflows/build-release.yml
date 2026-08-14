@@ -1,0 +1,169 @@
+name: Build & Release Windows App
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to publish (for example 2.1.0)'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Test, build and publish Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Resolve and stamp release version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            RAW="${GITHUB_REF_NAME}"
+            TAG="${GITHUB_REF_NAME}"
+          elif [[ -n "${INPUT_VERSION}" ]]; then
+            RAW="${INPUT_VERSION}"
+            TAG=""
+          else
+            RAW=$(node -p "require('./package.json').version")
+            TAG=""
+          fi
+
+          SEMVER="${RAW#v}"
+          SEMVER="${SEMVER#V}"
+          if [[ "$SEMVER" =~ ^[0-9]+$ ]]; then SEMVER="${SEMVER}.0.0"; fi
+          if [[ "$SEMVER" =~ ^[0-9]+\.[0-9]+$ ]]; then SEMVER="${SEMVER}.0"; fi
+          if [[ ! "$SEMVER" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid semantic version: $RAW" >&2
+            exit 1
+          fi
+          if [[ -z "$TAG" ]]; then TAG="v${SEMVER}"; fi
+
+          export ZLAG_SEMVER="$SEMVER"
+          node <<'NODE'
+          const fs = require('fs');
+          const version = process.env.ZLAG_SEMVER;
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.version = version;
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          lock.version = version;
+          if (lock.packages && lock.packages['']) lock.packages[''].version = version;
+          fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
+
+          const htmlPath = 'public/index.html';
+          const html = fs.readFileSync(htmlPath, 'utf8')
+            .replace(/id="appVersion">v[^<]+/, 'id="appVersion">v' + version);
+          fs.writeFileSync(htmlPath, html);
+          console.log('Stamped Z-LAG Toolbox ' + version);
+          NODE
+
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release: $TAG (app version $SEMVER)"
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Run test suite and syntax checks
+        run: npm run check
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build installer and portable executable
+        run: npm run build:all
+        env:
+          # electron-builder signs automatically when these optional repository
+          # secrets are configured. Empty secrets keep community builds working.
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+
+      - name: Verify release artifacts and updater metadata
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.semver }}"
+          $setup = Get-Item "dist-installer/Z-LAG-Toolbox-Setup-$version.exe" -ErrorAction Stop
+          $portable = Get-Item "dist-installer/Z-LAG-Toolbox-Portable-$version.exe" -ErrorAction Stop
+          $metadata = Get-Item "dist-installer/latest.yml" -ErrorAction Stop
+          $blockmap = Get-Item "dist-installer/Z-LAG-Toolbox-Setup-$version.exe.blockmap" -ErrorAction Stop
+
+          if ($setup.Length -lt 10MB) { throw "Installer is unexpectedly small" }
+          if ($portable.Length -lt 10MB) { throw "Portable executable is unexpectedly small" }
+          if ($metadata.Length -lt 50) { throw "latest.yml is empty" }
+          if (!(Select-String -Path $metadata.FullName -SimpleMatch $setup.Name -Quiet)) {
+            throw "latest.yml does not point to $($setup.Name)"
+          }
+
+          Get-ChildItem dist-installer -File |
+            Where-Object { $_.Extension -in '.exe', '.yml', '.blockmap' } |
+            Format-Table Name, Length -AutoSize
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Z-LAG-Toolbox-Windows-${{ steps.version.outputs.semver }}
+          path: |
+            dist-installer/*.exe
+            dist-installer/*.blockmap
+            dist-installer/latest*.yml
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Z-LAG Toolbox ${{ steps.version.outputs.semver }}
+          body: |
+            ## Z-LAG Toolbox ${{ steps.version.outputs.semver }}
+
+            Native Windows 10/11 desktop toolbox with its own bundled Chromium
+            engine — no browser, localhost server, or WebView2 prerequisite.
+
+            ### Downloads
+            - `Z-LAG-Toolbox-Setup-${{ steps.version.outputs.semver }}.exe` — recommended installer with automatic GitHub updates
+            - `Z-LAG-Toolbox-Portable-${{ steps.version.outputs.semver }}.exe` — portable edition with GitHub update notifications
+
+            ### Highlights
+            - Microsoft Store catalog search and install pipeline
+            - Missing/outdated driver scanner and updater
+            - 151 Windows tweaks and presets
+            - Hardened startup, safe-rendering recovery, and visible error logs
+            - Automatic NSIS updates through GitHub Releases
+
+            Built from `${{ github.sha }}` by GitHub Actions.
+          files: |
+            dist-installer/*.exe
+            dist-installer/*.blockmap
+            dist-installer/latest*.yml
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.semver, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
