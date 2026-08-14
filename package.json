@@ -1,0 +1,123 @@
+{
+  "name": "z-lag-toolbox",
+  "version": "2.1.0",
+  "description": "Z-LAG Toolbox is a native Windows desktop app with a Microsoft Store alternative, driver scanner/updater, and 151 Windows tweaks and presets.",
+  "main": "electron/main.js",
+  "type": "commonjs",
+  "productName": "Z-LAG Toolbox",
+  "author": "MrPcGamerYT",
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": [
+    "windows",
+    "toolbox",
+    "winget",
+    "driver-updater",
+    "windows-tweaks",
+    "store-alternative"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "electron .",
+    "dev": "electron .",
+    "dev:web": "node server/server.js",
+    "build": "electron-builder --win --x64 --publish=never",
+    "build:win": "electron-builder --win --x64 --publish=never",
+    "build:installer": "electron-builder --win nsis --x64 --publish=never",
+    "build:portable": "electron-builder --win portable --x64 --publish=never",
+    "build:all": "electron-builder --win nsis portable --x64 --publish=never",
+    "check": "npm test && npm run check:syntax",
+    "check:syntax": "node --check electron/main.js && node --check electron/launch.js && node --check electron/preload.js && node --check electron/updater.js && node --check server/core.js && node --check server/drivers.js && node --check server/drivercatalog.js && node --check server/store/jobs.js && node --check server/server.js && node --check public/js/app.js"
+  },
+  "build": {
+    "appId": "com.zlag.toolbox",
+    "productName": "Z-LAG Toolbox",
+    "copyright": "Copyright © 2026 MrPcGamerYT",
+    "directories": {
+      "output": "dist-installer",
+      "buildResources": "public"
+    },
+    "files": [
+      "electron/**/*",
+      "server/**/*",
+      "public/**/*",
+      "package.json",
+      "!**/*.map",
+      "!**/.github/**",
+      "!**/dist/**",
+      "!**/dist-installer/**"
+    ],
+    "extraResources": [
+      {
+        "from": "server/data",
+        "to": "server/data"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.ico",
+      "artifactName": "Z-LAG-Toolbox-${version}-${target}.${ext}",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Z-LAG Toolbox",
+      "artifactName": "Z-LAG-Toolbox-Setup-${version}.${ext}",
+      "installerIcon": "public/icon.ico",
+      "uninstallerIcon": "public/icon.ico",
+      "displayLanguageSelector": false,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "Z-LAG-Toolbox-Portable-${version}.${ext}",
+      "requestExecutionLevel": "user",
+      "unpackDirName": "ZLagToolbox"
+    },
+    "compression": "maximum",
+    "asar": true,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "MrPcGamerYT",
+        "repo": "Z-LAG-TOOLBOX",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrPcGamerYT/Z-LAG-TOOLBOX.git"
+  },
+  "homepage": "https://github.com/MrPcGamerYT/Z-LAG-TOOLBOX#readme",
+  "bugs": {
+    "url": "https://github.com/MrPcGamerYT/Z-LAG-TOOLBOX/issues"
+  },
+  "private": true
+}

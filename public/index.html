@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+  <title>Z-LAG Toolbox — Apps, Drivers, Gaming &amp; Windows Tweaks</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="icon.png" />
+</head>
+<body class="lightweight">
+  <!-- =========================================================================
+       SVG icon sprite — inlined so it works from file:// (external <use>
+       references are blocked outside HTTP). JS renders icons via
+       icon('i-wrench') → <svg class="ico"><use href="#i-wrench"/></svg>
+       ========================================================================= -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4.5 13.5h5.5L11 22l8.5-11.5h-5.5L13 2z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6.36 5.1L3 16.75V21h4.25l5.35-5.34a4.5 4.5 0 0 0 5.1-6.37l-3.18 3.18-2.83-2.83 3.01-3.34z"/></symbol>
+    <symbol id="i-gamepad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h4M8 7v4M15 12h.01M18 10h.01M17.32 5H6.68a4 4 0 0 0-3.98 3.59L2 14.5a2.5 2.5 0 0 0 4.24 1.74L8.5 14h7l2.26 2.24A2.5 2.5 0 0 0 22 14.5l-.7-5.91A4 4 0 0 0 17.32 5z"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 0 0 0 20c.83 0 1.5-.67 1.5-1.5 0-.39-.16-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16a6 6 0 0 0 6-6c0-4.97-4.5-9-10-9z"/><circle cx="13.5" cy="6.5" r=".8" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".8" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".8" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".8" fill="currentColor"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M6 4.5v15c0 .83.9 1.34 1.6.89l12.1-7.5a1.05 1.05 0 0 0 0-1.78L7.6 3.61A1.05 1.05 0 0 0 6 4.5z"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01" stroke-width="2.6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01" stroke-width="2.6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 6-6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 9.5a15 15 0 0 1 20 0"/><path d="M12 20h.01" stroke-width="2.8"/></symbol>
+    <symbol id="i-audio" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="12" x="2" y="6" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></symbol>
+    <symbol id="i-mouse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 7v4"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-broom" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 4.5 19.5 10.5l-7 7L6.5 11.5z"/><path d="M6.5 11.5 4 14l6 6 2.5-2.5"/></symbol>
+    <symbol id="i-window" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-disk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01" stroke-width="2.6"/><path d="M2 10h20"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-battery" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="10" x="2" y="7" rx="2"/><path d="M22 11v2"/><path d="m11 8-3 3h4l-3 3"/></symbol>
+    <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 19v3M10 19v3M14 19v3M18 19v3M6 5V2M10 5V2M14 5V2M18 5V2"/><path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 9h8v6H8z"/></symbol>
+    <symbol id="i-snow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.93 4.93l14.14 14.14M2 12h20M4.93 19.07 19.07 4.93"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></symbol>
+    <symbol id="i-taskbar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="18" x="2" y="3" rx="2"/><path d="M2 17h20"/><path d="M6 19h.01M10 19h.01M14 19h.01" stroke-width="2.6"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 0 0-16 0"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-tools" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21 13.59 10.4"/><path d="m14.5 2.5 1.5 1L19.5 7l-4 4-3.5-3.5 2.5-2.5-1.5-1z"/><path d="M4 4l4 4"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
+    <symbol id="i-scale" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></symbol>
+  </svg>
+
+  <!-- Pure-CSS animated background (no image) -->
+  <div class="bg" aria-hidden="true">
+    <div class="orb o1"></div>
+    <div class="orb o2"></div>
+    <div class="orb o3"></div>
+    <div class="orb o4"></div>
+    <div class="grid-lines"></div>
+  </div>
+
+  <!-- ===================== TOP BAR (native title bar) ===================== -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo"><img src="icon.png" alt="" class="brand-logo" /></div>
+      <div class="brand-copy">
+        <div class="brand-name">Z-LAG TOOLBOX</div>
+        <div class="brand-sub">zero lag · zero bloat</div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <span id="modePillTop" class="mode-pill demo">…</span>
+    <button class="btn btn-ghost btn-sm no-drag" id="btnDownloads" title="Open downloads folder" style="display:none"><svg class="ico" aria-hidden="true"><use href="#i-folder" /></svg> Downloads</button>
+    <div class="win-controls no-drag" id="winControls" style="display:none">
+      <button class="win-btn" id="winMin" title="Minimize" aria-label="Minimize">&#xE921;</button>
+      <button class="win-btn" id="winMax" title="Maximize" aria-label="Maximize">&#xE922;</button>
+      <button class="win-btn close" id="winClose" title="Close" aria-label="Close">&#xE8BB;</button>
+    </div>
+  </header>
+
+  <div class="app-shell">
+
+    <!-- ===================== SIDEBAR ===================== -->
+    <aside class="sidebar">
+      <div class="side-label">Menu</div>
+      <div class="nav-item active" data-page="store">
+        <span class="nav-ico"><img src="img/msstore.svg" alt="" class="nav-img" /></span>
+        <span class="nav-label">Microsoft Store</span>
+      </div>
+      <div class="nav-item" data-page="drivers"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-wrench" /></svg></span><span class="nav-label">Driver Center</span></div>
+      <div class="side-label">Gaming</div>
+      <div class="nav-item" data-page="gaming" data-category="Game Optimization"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-gamepad" /></svg></span><span class="nav-label">Gaming Optimization</span></div>
+      <div class="nav-item" data-page="gaming" data-category="Latency &amp; Network"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-wifi" /></svg></span><span class="nav-label">Latency &amp; Network</span></div>
+      <div class="side-label">Windows Tweaks</div>
+      <div class="nav-item" data-page="tweaks" data-category="Performance"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-bolt" /></svg></span><span class="nav-label">Performance</span></div>
+      <div class="nav-item" data-page="tweaks" data-category="Privacy"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-shield" /></svg></span><span class="nav-label">Privacy</span></div>
+      <div class="nav-item" data-page="tweaks" data-category="Debloat"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-trash" /></svg></span><span class="nav-label">Debloat</span></div>
+      <div class="nav-item" data-page="tweaks" data-category="Cleanup"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-broom" /></svg></span><span class="nav-label">Cleanup</span></div>
+      <div class="nav-item" data-page="tweaks" data-category="System"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-cpu" /></svg></span><span class="nav-label">System</span></div>
+      <div class="nav-item" data-page="customize"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-palette" /></svg></span><span class="nav-label">Customize</span></div>
+      <div class="side-label">System</div>
+      <div class="nav-item" data-page="dashboard"><span class="nav-ico"><svg class="ico" aria-hidden="true"><use href="#i-home" /></svg></span><span class="nav-label">Dashboard</span></div>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-meta">
+          <div id="modePill" class="mode-pill demo">…</div>
+          <div class="sidebar-version"><span>Z-LAG</span> <strong id="appVersion">v2.1.0</strong></div>
+        </div>
+        <div class="sidebar-tech">Store CDN · PowerShell · Update Catalog</div>
+      </div>
+    </aside>
+
+    <!-- ===================== MAIN ===================== -->
+    <main class="main">
+
+      <!-- DASHBOARD -->
+      <section class="page" id="page-dashboard">
+        <div class="page-header">
+          <h1><svg class="ico h1-ico" aria-hidden="true"><use href="#i-home" /></svg>Dashboard</h1>
+          <p>System overview and quick actions for your Windows machine.</p>
+        </div>
+        <div class="banner demo" id="modeBanner" style="display:none">
+          <svg class="ico banner-ico" aria-hidden="true"><use href="#i-info" /></svg>
+          <span><span class="em">Demo mode:</span> actions are simulated so you can try the whole toolbox. Run this app on a Windows PC and every action will install apps, update drivers, and apply tweaks for real.</span>
+        </div>
+        <div class="sys-grid" id="sysGrid">
+          <div class="glass sys-tile"><div class="label">Operating System</div><div class="value">…</div></div>
+          <div class="glass sys-tile"><div class="label">CPU</div><div class="value" style="font-size:15px">…</div></div>
+          <div class="glass sys-tile"><div class="label">GPU</div><div class="value" style="font-size:15px">…</div></div>
+          <div class="glass sys-tile"><div class="label">RAM</div><div class="value">…</div></div>
+          <div class="glass sys-tile"><div class="label">Cores / Threads</div><div class="value">…</div></div>
+        </div>
+        <div class="section-title"><h2>Quick Actions</h2></div>
+        <div class="app-grid">
+          <div class="glass app-card">
+            <div class="app-icon"><img src="img/msstore.svg" alt="" class="app-icon-img" /></div>
+            <div class="app-name">Open Microsoft Store</div>
+            <div class="app-desc">Find and install any Store app or game — the Store app never opens.</div>
+            <button class="btn btn-primary btn-sm" data-nav="store">Open</button>
+          </div>
+          <div class="glass app-card">
+            <div class="app-icon"><svg class="ico" aria-hidden="true"><use href="#i-wrench" /></svg></div>
+            <div class="app-name">Scan Drivers</div>
+            <div class="app-desc">Detect every driver, spot updates and missing gaming drivers — no Windows Update needed.</div>
+            <button class="btn btn-primary btn-sm" data-nav="drivers">Open</button>
+          </div>
+          <div class="glass app-card">
+            <div class="app-icon"><svg class="ico" aria-hidden="true"><use href="#i-gamepad" /></svg></div>
+            <div class="app-name">Gaming Boost</div>
+            <div class="app-desc">Cut network latency and squeeze out extra frames.</div>
+            <button class="btn btn-primary btn-sm" data-nav="gaming" data-category="Game Optimization">Open</button>
+          </div>
+          <div class="glass app-card">
+            <div class="app-icon"><svg class="ico" aria-hidden="true"><use href="#i-refresh" /></svg></div>
+            <div class="app-name">Restore Point</div>
+            <div class="app-desc">Create a safety restore point before changes.</div>
+            <button class="btn btn-success btn-sm" id="btnRestore">Create</button>
+          </div>
+          <div class="glass app-card update-card" id="updateCard">
+            <div class="app-icon"><svg class="ico" aria-hidden="true"><use href="#i-download" /></svg></div>
+            <div class="app-name">App updates <span class="badge info" id="updateBadge">GitHub</span></div>
+            <div class="app-desc" id="updateStatus" aria-live="polite">Updates are checked automatically from GitHub Releases.</div>
+            <div class="update-progress" id="updateProgress" hidden>
+              <div class="update-progress-fill" id="updateProgressFill"></div>
+            </div>
+            <div class="update-actions">
+              <button class="btn btn-primary btn-sm" id="btnUpdateCheck">Check now</button>
+              <button class="btn btn-success btn-sm" id="btnUpdateInstall" hidden>Restart &amp; install</button>
+              <button class="btn btn-sm" id="btnUpdateRelease" hidden>Open release</button>
+            </div>
+          </div>
+          <div class="glass app-card runtime-card">
+            <div class="app-icon"><svg class="ico" aria-hidden="true"><use href="#i-globe" /></svg></div>
+            <div class="app-name">Web engine <span class="badge ok">bundled</span></div>
+            <div class="app-desc">Chromium ships inside Z-LAG Toolbox. WebView2 is not required, so a missing Windows web runtime cannot block startup.</div>
+            <div class="runtime-version" id="runtimeVersion">Embedded Chromium</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MICROSOFT STORE -->
+      <section class="page active" id="page-store">
+        <div class="page-header">
+          <h1><img src="img/msstore.svg" alt="" class="h1-img" />Microsoft Store</h1>
+          <p>Search the full Microsoft Store catalog of apps and games, open a product page, and install — all inside the toolbox. The Store app is never launched.</p>
+        </div>
+
+        <div class="glass searchbar">
+          <svg class="ico magnify" aria-hidden="true"><use href="#i-search" /></svg>
+          <input id="appSearch" type="search" placeholder="Search every app &amp; game…  Minecraft, WhatsApp, Forza, Photoshop" autocomplete="off" />
+          <span id="storeSearchSpinner" class="spinner" style="display:none"></span>
+        </div>
+        <div class="hint" id="storeSearchHint" style="margin-top:2px;margin-bottom:12px">Search uses the official Microsoft Store catalog APIs. Click a card → Get. The Store app never opens.</div>
+
+        <div class="chips" id="appChips"></div>
+        <div id="storeList"></div>
+
+      </section>
+
+      <!-- DRIVER CENTER -->
+      <section class="page" id="page-drivers">
+        <div class="page-header">
+          <h1><svg class="ico h1-ico" aria-hidden="true"><use href="#i-wrench" /></svg>Driver Center</h1>
+          <p>Detect <b>every driver</b> on this PC, install <b>missing and outdated drivers</b>, and find <b>missing gaming drivers</b>. Works fully offline-first and without Windows Update — drivers are downloaded directly from the Microsoft Update Catalog, so it also works on Z-LAG OS where Windows Update is blocked.</p>
+        </div>
+
+        <div class="section-title">
+          <h2>Driver Scan</h2>
+          <button class="btn btn-primary" id="btnScan"><svg class="ico" aria-hidden="true"><use href="#i-search" /></svg> Scan now</button>
+        </div>
+
+        <!-- Appears only once a scan has found something to do. -->
+        <div class="glass card-pad" id="driverActionBar" style="display:none;margin-bottom:18px">
+          <div class="driver-action">
+            <div class="driver-action-text">
+              <div class="driver-action-title" id="driverActionTitle">Ready to update</div>
+              <div class="driver-action-sub" id="driverActionSub"></div>
+            </div>
+            <button class="btn btn-success" id="btnUpdateAllDrivers">
+              <svg class="ico" aria-hidden="true"><use href="#i-download" /></svg> Update drivers &amp; gaming runtimes
+            </button>
+          </div>
+        </div>
+
+        <div class="glass card-pad" id="scanArea">
+          <div class="empty"><svg class="ico big-ico" aria-hidden="true"><use href="#i-search" /></svg>Click <b>Scan now</b> to check your drivers.</div>
+        </div>
+      </section>
+
+      <!-- GAMING -->
+      <section class="page" id="page-gaming">
+        <div class="page-header">
+          <h1><svg class="ico h1-ico" aria-hidden="true"><use href="#i-gamepad" /></svg><span id="gamingPageTitle">Gaming</span></h1>
+          <p>Latency, input response and frame-rate tuning. Every change is applied directly to Windows — nothing is exported as a script.</p>
+        </div>
+        <div class="banner demo" style="display:none" id="gamingBanner">
+          <svg class="ico banner-ico" aria-hidden="true"><use href="#i-warn" /></svg>
+          <span>These tweaks change system settings. <b>Create a restore point first</b> (Dashboard → Restore Point).</span>
+        </div>
+
+        <div class="section-title">
+          <h2 class="with-ico"><svg class="ico" aria-hidden="true"><use href="#i-bolt" /></svg>Gaming Presets</h2>
+          <span class="small">Apply a full set of related tweaks with one click</span>
+        </div>
+        <div class="preset-grid" id="gamingPresetGrid"></div>
+
+        <div class="section-title sticky-actions">
+          <h2 id="gamingSectionTitle">Gaming Tweaks</h2>
+          <div class="title-actions">
+            <input class="filter-input" id="gamingFilter" type="search" placeholder="Filter tweaks…" autocomplete="off" />
+            <span class="sel-count" id="gamingSelCount">0 selected</span>
+            <button class="btn btn-ghost btn-sm" id="btnGamingClear">Clear</button>
+            <button class="btn btn-danger btn-sm" id="btnGamingRevert"><svg class="ico" aria-hidden="true"><use href="#i-undo" /></svg> Revert selected</button>
+            <button class="btn btn-primary" id="btnApplyGaming"><svg class="ico" aria-hidden="true"><use href="#i-bolt" /></svg> Apply selected</button>
+          </div>
+        </div>
+        <div class="tweak-grid" id="gamingGrid"></div>
+        <div class="hint"><svg class="ico hint-ico" aria-hidden="true"><use href="#i-info" /></svg> Explorer restarts automatically after each tweak so changes take effect immediately.</div>
+      </section>
+
+      <!-- TWEAKS -->
+      <section class="page" id="page-tweaks">
+        <div class="page-header">
+          <h1><svg class="ico h1-ico" aria-hidden="true"><use href="#i-sliders" /></svg><span id="tweaksPageTitle">Performance &amp; Privacy Tweaks</span></h1>
+          <p>One-click Windows optimizations for maximum FPS, lower latency, less bloat and more privacy.</p>
+        </div>
+        <div class="banner demo" style="display:none" id="tweakBanner">
+          <svg class="ico banner-ico" aria-hidden="true"><use href="#i-warn" /></svg>
+          <span>Some tweaks modify system settings. <b>Create a restore point first</b> (Dashboard → Restore Point).</span>
+        </div>
+
+        <div class="section-title">
+          <h2 class="with-ico"><svg class="ico" aria-hidden="true"><use href="#i-bolt" /></svg>One-Click Presets</h2>
+          <span class="small">Apply a full set of related tweaks with one click</span>
+        </div>
+        <div class="preset-grid" id="presetGrid"></div>
+
+        <div class="section-title sticky-actions">
+          <h2 id="tweaksSectionTitle">Tweaks</h2>
+          <div class="title-actions">
+            <input class="filter-input" id="tweaksFilter" type="search" placeholder="Filter tweaks…" autocomplete="off" />
+            <span class="sel-count" id="tweaksSelCount">0 selected</span>
+            <button class="btn btn-ghost btn-sm" id="btnTweaksClear">Clear</button>
+            <button class="btn btn-danger btn-sm" id="btnTweaksRevert"><svg class="ico" aria-hidden="true"><use href="#i-undo" /></svg> Revert selected</button>
+            <button class="btn btn-primary" id="btnApplySelected"><svg class="ico" aria-hidden="true"><use href="#i-bolt" /></svg> Apply selected</button>
+          </div>
+        </div>
+        <div class="tweak-grid" id="tweakGrid"></div>
+        <div class="hint"><svg class="ico hint-ico" aria-hidden="true"><use href="#i-info" /></svg> Toggle any tweaks, then hit <b>Apply selected</b>. High-risk tweaks are best applied one at a time — create a restore point first.</div>
+      </section>
+
+      <!-- CUSTOMIZE -->
+      <section class="page" id="page-customize">
+        <div class="page-header">
+          <h1><svg class="ico h1-ico" aria-hidden="true"><use href="#i-palette" /></svg>Customization</h1>
+          <p>Personalize the look and feel of Windows — taskbar, Start menu, File Explorer, desktop and login screen.</p>
+        </div>
+        <div class="section-title">
+          <h2>Style Presets</h2>
+          <span class="small">Apply a ready-made look with one click</span>
+        </div>
+        <div class="preset-grid" id="customizePresetGrid"></div>
+
+        <div class="section-title sticky-actions">
+          <h2>Customization Options</h2>
+          <div class="title-actions">
+            <input class="filter-input" id="customizeFilter" type="search" placeholder="Filter options…" autocomplete="off" />
+            <span class="sel-count" id="customizeSelCount">0 selected</span>
+            <button class="btn btn-ghost btn-sm" id="btnCustomizeClear">Clear</button>
+            <button class="btn btn-danger btn-sm" id="btnCustomizeRevert"><svg class="ico" aria-hidden="true"><use href="#i-undo" /></svg> Revert selected</button>
+            <button class="btn btn-primary" id="btnApplyVisual"><svg class="ico" aria-hidden="true"><use href="#i-bolt" /></svg> Apply selected</button>
+          </div>
+        </div>
+        <div class="tweak-grid" id="customizeGrid"></div>
+        <div class="hint"><svg class="ico hint-ico" aria-hidden="true"><use href="#i-info" /></svg> Explorer restarts automatically after each change, so the new look appears right away.</div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ===================== IN-APP PRODUCT PAGE ===================== -->
+  <div class="picker-backdrop" id="productBackdrop">
+    <div class="glass product-sheet">
+      <button class="product-close" id="btnProductClose" title="Back" aria-label="Close"><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button>
+      <div id="productBody" class="product-body"></div>
+    </div>
+  </div>
+
+  <!-- ===================== INSTALL PROGRESS ===================== -->
+  <div class="modal-backdrop" id="jobBackdrop">
+    <div class="glass modal job-modal">
+      <div class="job-head">
+        <div class="job-head-icon" id="jobIcon"><svg class="ico" aria-hidden="true"><use href="#i-download" /></svg></div>
+        <div class="job-head-text">
+          <h3 id="jobTitle">Installing…</h3>
+          <div class="job-meta" id="jobMeta"></div>
+        </div>
+        <button class="product-close" id="jobClose" title="Keep installing in the background" aria-label="Minimize to background"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg></button>
+      </div>
+      <div class="job-stages" id="jobStages"></div>
+      <div class="job-progress">
+        <div class="job-progress-head">
+          <span id="jobStageLabel">Overall</span>
+          <span class="job-pct" id="jobPct">0%</span>
+        </div>
+        <div class="job-bar"><div class="job-bar-fill" id="jobBar"></div></div>
+      </div>
+      <div class="job-progress">
+        <div class="job-progress-head">
+          <span class="job-file" id="jobFile">…</span>
+          <span class="job-pct" id="jobFilePct"></span>
+        </div>
+        <div class="job-bar slim"><div class="job-bar-fill cyan" id="jobFileBar"></div></div>
+      </div>
+      <div class="log-box" id="jobLog"></div>
+      <div class="job-notes" id="jobNotes" style="display:none"></div>
+      <div class="actions">
+        <span class="job-hint" id="jobHint">Close keeps the install running in the background.</span>
+        <button class="btn btn-sm" id="jobFolder" style="display:none"><svg class="ico" aria-hidden="true"><use href="#i-folder" /></svg> Open folder</button>
+        <button class="btn btn-primary btn-sm" id="jobLaunch" style="display:none"><svg class="ico" aria-hidden="true"><use href="#i-play" /></svg> Open app</button>
+        <button class="btn btn-primary btn-sm" id="jobRetry" style="display:none"><svg class="ico" aria-hidden="true"><use href="#i-undo" /></svg> Retry download</button>
+        <button class="btn btn-danger btn-sm" id="jobCancel">Cancel install</button>
+        <button class="btn" id="jobBackground"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg> Keep in background</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== DRIVER UPDATE PROGRESS ===================== -->
+  <div class="modal-backdrop" id="drvBackdrop">
+    <div class="glass modal job-modal">
+      <div class="job-head">
+        <div class="job-head-icon"><svg class="ico" aria-hidden="true"><use href="#i-wrench" /></svg></div>
+        <div class="job-head-text">
+          <h3 id="drvTitle">Updating drivers…</h3>
+          <div class="job-meta" id="drvMeta"></div>
+        </div>
+        <button class="product-close" id="drvClose" title="Close" aria-label="Close"><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button>
+      </div>
+      <div class="job-stages" id="drvStages"></div>
+      <div class="job-progress">
+        <div class="job-progress-head">
+          <span id="drvFile">…</span>
+          <span class="job-pct" id="drvPct">0%</span>
+        </div>
+        <div class="job-bar"><div class="job-bar-fill" id="drvBar"></div></div>
+      </div>
+      <div class="log-box" id="drvLog"></div>
+      <div class="actions">
+        <span class="job-hint" id="drvHint">Closing keeps the driver update running in the background.</span>
+        <button class="btn btn-primary btn-sm" id="drvRetry" style="display:none"><svg class="ico" aria-hidden="true"><use href="#i-undo" /></svg> Retry failed downloads</button>
+        <button class="btn btn-danger btn-sm" id="drvCancel">Cancel</button>
+        <button class="btn" id="drvBackground"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg> Keep in background</button>
+        <button class="btn" id="drvCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL ===================== -->
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="glass modal">
+      <div class="job-head">
+        <div class="job-head-text"><h3 id="modalTitle">Result</h3></div>
+        <button class="product-close" id="modalX" title="Close" aria-label="Close"><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button>
+      </div>
+      <div class="log-box" id="modalLog"></div>
+      <div class="actions">
+        <span class="job-hint"></span>
+        <button class="btn" id="modalClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== BOTTOM-RIGHT CORNER STACK: toasts sit above the job tray ======
+       Both live in one flex column so a background install indicator is never
+       hidden underneath a toast. -->
+  <div class="corner-stack">
+    <div class="toast-wrap" id="toastWrap"></div>
+    <div class="job-tray" id="jobTray" aria-live="polite"></div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

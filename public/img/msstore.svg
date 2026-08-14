@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="Microsoft Store">
+  <defs>
+    <linearGradient id="msbag" x1="8" y1="6" x2="40" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3fd0ff"/>
+      <stop offset="0.55" stop-color="#2b88f0"/>
+      <stop offset="1" stop-color="#1a5fd0"/>
+    </linearGradient>
+  </defs>
+  <!-- bag handle -->
+  <path d="M17 15v-2.5a7 7 0 0 1 14 0V15" fill="none" stroke="url(#msbag)" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- bag body -->
+  <path d="M9.5 15h29a2.5 2.5 0 0 1 2.49 2.74l-2.3 22.5A4 4 0 0 1 34.71 44H13.29a4 4 0 0 1-3.98-3.76l-2.3-22.5A2.5 2.5 0 0 1 9.5 15z" fill="url(#msbag)"/>
+  <!-- windows four-pane -->
+  <g fill="#ffffff">
+    <rect x="16" y="22.6" width="6.4" height="6.4" rx="0.9"/>
+    <rect x="25.6" y="22.6" width="6.4" height="6.4" rx="0.9"/>
+    <rect x="16" y="32.2" width="6.4" height="6.4" rx="0.9"/>
+    <rect x="25.6" y="32.2" width="6.4" height="6.4" rx="0.9"/>
+  </g>
+</svg>

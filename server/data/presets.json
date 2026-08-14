@@ -1,0 +1,173 @@
+[
+  {
+    "id": "gaming",
+    "name": "Competitive Gaming",
+    "icon": "🎮",
+    "section": "gaming",
+    "accent": "#7c5cff",
+    "description": "Maximum FPS and the lowest possible input + network latency. The full esports loadout.",
+    "tweakIds": [
+      "perf-ultimate-power",
+      "perf-core-parking",
+      "game-power-throttle-off",
+      "game-mmcss-games",
+      "game-mode-on",
+      "game-disable-gamebar",
+      "game-fullscreen-opt",
+      "game-mouse-accel-off",
+      "game-input-delay",
+      "game-keyboard-fast",
+      "game-sticky-keys-off",
+      "net-disable-nagle",
+      "net-throttling-off",
+      "net-bandwidth-reserve",
+      "net-adapter-power-off",
+      "perf-visual-effects",
+      "perf-background-apps"
+    ]
+  },
+  {
+    "id": "netlatency",
+    "name": "Network & Ping",
+    "icon": "🛰️",
+    "section": "gaming",
+    "accent": "#22c8a0",
+    "description": "Everything that touches ping: Nagle off, QoS reserve freed, TCP tuned and Cloudflare DNS.",
+    "tweakIds": [
+      "net-disable-nagle",
+      "net-throttling-off",
+      "net-tcp-tuning",
+      "net-bandwidth-reserve",
+      "net-adapter-power-off",
+      "net-ports-tuning",
+      "dns-cloudflare",
+      "net-flush-dns",
+      "priv-update-p2p"
+    ]
+  },
+  {
+    "id": "privacy",
+    "name": "Privacy Lockdown",
+    "icon": "🔒",
+    "section": "tweaks",
+    "accent": "#ff5c7c",
+    "description": "Telemetry, ads, Copilot, Recall, Cortana and every app permission — all off.",
+    "tweakIds": [
+      "priv-telemetry",
+      "priv-advertising-id",
+      "priv-suggestions",
+      "priv-cortana",
+      "priv-copilot",
+      "priv-recall",
+      "priv-activity-history",
+      "priv-location",
+      "priv-camera-access",
+      "priv-mic-access",
+      "priv-speech",
+      "priv-handwriting",
+      "priv-feedback",
+      "priv-web-search",
+      "priv-update-p2p",
+      "priv-edge-telemetry"
+    ]
+  },
+  {
+    "id": "balanced",
+    "name": "Balanced Daily Driver",
+    "icon": "⚖️",
+    "section": "tweaks",
+    "accent": "#4c9aff",
+    "description": "A safe, reversible set of everyday performance and privacy wins. Nothing high-risk.",
+    "tweakIds": [
+      "perf-high-power",
+      "perf-background-apps",
+      "perf-startup-delay-off",
+      "perf-hung-app-timeout",
+      "perf-limit-defender",
+      "priv-telemetry",
+      "priv-advertising-id",
+      "priv-suggestions",
+      "ex-file-extensions",
+      "ex-hidden-files",
+      "sys-long-paths"
+    ]
+  },
+  {
+    "id": "cleanup",
+    "name": "Clean & Speed Up",
+    "icon": "🧹",
+    "section": "tweaks",
+    "accent": "#f5a524",
+    "description": "Reclaim disk space, kill background services and trim the boot sequence.",
+    "tweakIds": [
+      "sys-clean-temp",
+      "sys-empty-recycle",
+      "sys-disk-cleanup",
+      "sys-clear-eventlogs",
+      "perf-disable-hibernate",
+      "perf-disable-sysmain",
+      "perf-startup-delay-off",
+      "perf-boot-menu-fast",
+      "perf-trim-ssd"
+    ]
+  },
+  {
+    "id": "debloat",
+    "name": "Full Debloat",
+    "icon": "🧽",
+    "section": "tweaks",
+    "accent": "#c56cf0",
+    "description": "Strips preinstalled junk apps, OneDrive, Xbox packages, widgets and Copilot.",
+    "tweakIds": [
+      "sys-debloat",
+      "sys-remove-onedrive",
+      "sys-remove-xbox",
+      "priv-copilot",
+      "priv-recall",
+      "tb-hide-widgets",
+      "priv-suggestions",
+      "start-no-recommendations"
+    ]
+  },
+  {
+    "id": "win10look",
+    "name": "Windows 10 Look",
+    "icon": "🪟",
+    "section": "customize",
+    "accent": "#5ac8fa",
+    "description": "Left taskbar, classic right-click menu, no widgets, no Copilot — the familiar layout back.",
+    "tweakIds": [
+      "tb-left",
+      "ex-classic-menu",
+      "tb-hide-widgets",
+      "tb-hide-copilot",
+      "tb-hide-chat",
+      "tb-hide-search",
+      "ex-hide-home-gallery",
+      "ex-launch-thispc",
+      "tb-combine-never"
+    ]
+  },
+  {
+    "id": "powerlook",
+    "name": "Power User Desktop",
+    "icon": "🎨",
+    "section": "customize",
+    "accent": "#7c5cff",
+    "description": "Dark mode, file extensions, hidden files, seconds in the clock, End Task and Copy-as-path.",
+    "tweakIds": [
+      "ui-dark-mode",
+      "ex-file-extensions",
+      "ex-hidden-files",
+      "ex-full-path",
+      "tb-seconds",
+      "tb-end-task",
+      "tb-show-all-tray",
+      "ex-cmd-here",
+      "ex-copy-path",
+      "ex-god-mode",
+      "ui-verbose-logon",
+      "ui-detailed-bsod"
+    ]
+  }
+]
