@@ -365,13 +365,53 @@ const PCI_VENDOR_NAMES = {
   '1002': 'AMD',
   '1022': 'AMD',
   '8086': 'Intel',
-  '1414': 'Microsoft'
+  '1414': 'Microsoft',
+  // Extra silicon vendors. Recognising these is what lets the scanner say
+  // "an Intel/Realtek/Qualcomm package exists" instead of accepting whatever
+  // inbox Microsoft driver Windows happened to bind.
+  '10ec': 'Realtek',
+  '168c': 'Qualcomm Atheros',
+  '17cb': 'Qualcomm',
+  '14e4': 'Broadcom',
+  '11ab': 'Marvell',
+  '1b21': 'ASMedia',
+  '1b4b': 'Marvell',
+  '144d': 'Samsung',
+  '1cc1': 'ADATA',
+  '15b7': 'Western Digital',
+  '1c5c': 'SK hynix',
+  '1e0f': 'KIOXIA',
+  '1987': 'Phison',
+  '126f': 'Silicon Motion',
+  '1179': 'Toshiba',
+  '1106': 'VIA',
+  '1969': 'Qualcomm Atheros',
+  '1d6a': 'Aquantia'
 };
+
+/**
+ * Vendors that ship their own Windows driver packages. When the hardware
+ * belongs to one of these, a Microsoft-provided inbox driver is only ever a
+ * placeholder — the vendor package must win.
+ */
+const SILICON_VENDORS = /^(nvidia|amd|intel|realtek|qualcomm|qualcomm atheros|broadcom|marvell|asmedia|samsung|western digital|sk hynix|kioxia|phison|silicon motion|adata|toshiba|via|aquantia|mediatek|killer)$/i;
+
+/** True when this driver provider string is really "Windows' own driver". */
+function isMicrosoftProvider(vendor) {
+  const v = String(vendor || '').trim();
+  if (!v) return false;
+  return /^(microsoft|microsoft corporation|standard|\(standard|generic|unknown)/i.test(v);
+}
+
+/** True when a vendor name belongs to a chip maker that ships real drivers. */
+function isSiliconVendor(vendor) {
+  return SILICON_VENDORS.test(String(vendor || '').trim());
+}
 
 /** Recover the physical vendor hidden behind a generic Microsoft driver. */
 function vendorFromHardwareIds(ids) {
   for (const id of ids || []) {
-    const m = /(?:VEN_|VID_)([0-9a-f]{4})/i.exec(String(id));
+    const m = /(?:VEN_|VID_|SUBSYS_[0-9a-f]{4})([0-9a-f]{4})/i.exec(String(id));
     if (m && PCI_VENDOR_NAMES[m[1].toLowerCase()]) return PCI_VENDOR_NAMES[m[1].toLowerCase()];
   }
   return '';
@@ -416,6 +456,11 @@ function graphicsIdentity(device, systemInfo) {
   const ids = (device.hwids || []).concat(device.compatIds || [], [device.deviceId || '']);
   const fromId = vendorFromHardwareIds(ids);
   if (fromId && fromId !== 'Microsoft') return { vendor: fromId, source: 'hardware ID' };
+
+  // An Intel/AMD CPU with integrated graphics still exposes the iGPU through
+  // Win32_VideoController even when the display device itself sits behind the
+  // Microsoft Basic Display Adapter. Match on the video controller BEFORE
+  // falling back to a CPU-only guess.
 
   const system = normaliseSystemInfo(systemInfo);
   const id = String(device.deviceId || '').toLowerCase();
@@ -619,7 +664,8 @@ function gamingReport(devices) {
 
     if (members.length) {
       // The most interesting member decides the verdict.
-      const rank = (d) => (d.missing ? 0 : (d.gaming.generic ? 1 : (d.needsUpdate ? 2 : 3)));
+      const rank = (d) => (d.missing ? 0
+        : (d.gaming.generic ? 1 : (d.vendorDriverWanted ? 2 : (d.needsUpdate ? 3 : 4))));
       const sorted = members.slice().sort((a, b) => rank(a) - rank(b));
       device = sorted[0];
       if (device.missing) {
@@ -628,6 +674,12 @@ function gamingReport(devices) {
       } else if (device.gaming.generic) {
         state = 'generic';
         detail = device.name + ' is running on the generic Windows driver.';
+      } else if (device.vendorDriverWanted) {
+        // Works, but on Microsoft's inbox driver while the silicon vendor
+        // ships a real one — the fresh-Windows case.
+        state = 'inbox';
+        detail = device.name + ' is using the built-in Microsoft driver; the ' +
+          (device.hardwareVendor || 'vendor') + ' driver is available and performs better.';
       } else if (device.needsUpdate) {
         state = 'outdated';
         detail = 'A newer driver is available for ' + device.name + '.';
@@ -654,8 +706,11 @@ function gamingReport(devices) {
       detail,
       advice: state === 'outdated'
         ? 'A driver update is available — run "Update all" to install it.'
-        : ((state === 'ok' || state === 'absent') ? '' : rule.advice),
-      vendorHint: rule.vendorHint,
+        : (state === 'inbox'
+          ? 'Run "Update all" to replace the Microsoft driver with the ' +
+            ((device && device.hardwareVendor) || rule.vendorHint) + ' package.'
+          : ((state === 'ok' || state === 'absent') ? '' : rule.advice)),
+      vendorHint: (device && device.hardwareVendor) || rule.vendorHint,
       deviceName: device ? device.name : '',
       version: device ? device.version : '',
       count: members.length
@@ -663,7 +718,10 @@ function gamingReport(devices) {
   });
 
   const problems = categories.filter((c) => c.state === 'missing' || c.state === 'generic');
-  const outdated = categories.filter((c) => c.state === 'outdated');
+  // "inbox" is not a fault — the machine works — but it IS actionable work,
+  // so it is counted with the updates rather than the problems.
+  const outdated = categories.filter((c) => c.state === 'outdated' || c.state === 'inbox');
+  const inbox = categories.filter((c) => c.state === 'inbox');
   const blocking = problems.filter((c) => c.critical);
 
   // 100 minus a weighted penalty per problem category.
@@ -671,6 +729,7 @@ function gamingReport(devices) {
   for (const c of categories) {
     if (c.state === 'missing') score -= c.critical ? 40 : 12;
     else if (c.state === 'generic') score -= c.critical ? 30 : 8;
+    else if (c.state === 'inbox') score -= c.critical ? 15 : 5;
     else if (c.state === 'outdated') score -= c.critical ? 12 : 4;
   }
   score = Math.max(0, Math.min(100, score));
@@ -680,7 +739,10 @@ function gamingReport(devices) {
   let verdict;
   if (blocking.length) verdict = 'Not game ready — a critical driver is missing or generic.';
   else if (problems.length) verdict = 'Playable — ' + plural(problems.length, 'driver') + ' run on a generic or missing stack.';
-  else if (outdated.length) verdict = 'Game ready — ' + plural(outdated.length, 'optional driver update') + ' available.';
+  else if (inbox.length) {
+    verdict = 'Playable — ' + plural(inbox.length, 'device') +
+      ' still use the built-in Microsoft driver instead of the vendor one.';
+  } else if (outdated.length) verdict = 'Game ready — ' + plural(outdated.length, 'optional driver update') + ' available.';
   else verdict = 'Game ready — all gaming drivers are present and current.';
 
   return {
@@ -689,6 +751,7 @@ function gamingReport(devices) {
     ready: blocking.length === 0,
     problemCount: problems.length,
     outdatedCount: outdated.length,
+    inboxCount: inbox.length,
     categories
   };
 }
@@ -812,14 +875,23 @@ const DEMO_DEVICES = [
   ['High Definition Audio Device', 'Microsoft', 'MEDIA', '10.0.22621.1', false],
   ['Intel(R) Wireless Bluetooth(R)', 'Intel', 'Bluetooth', '23.20.0.3', false],
   ['Logitech G502 HERO Gaming Mouse', 'Logitech', 'HIDClass', '6.0.532.12', false],
+  // The fresh-Windows case, 6th field = the real silicon vendor behind a
+  // working Microsoft inbox driver (Intel i3 6th gen iGPU + chipset).
+  ['Intel(R) HD Graphics 530', 'Microsoft Corporation', 'Display', '10.0.19041.1', false, 'Intel'],
+  ['Intel(R) 100 Series Chipset Family SMBus Controller', 'Microsoft Corporation', 'System',
+    '10.0.19041.1', false, 'Intel'],
   ['Base System Device', 'Unknown', 'Unknown', null, false],
   ['PCI Simple Communications Controller', 'Unknown', 'Unknown', null, false]
 ];
 
 function demoScan() {
-  const devices = DEMO_DEVICES.map(([name, vendor, cls, version, outdated]) => {
+  const devices = DEMO_DEVICES.map(([name, vendor, cls, version, outdated, siliconVendor]) => {
     const missing = version == null;
-    return {
+    // Working, but on Microsoft's own driver while the chip maker ships a real
+    // package — actionable even though nothing looks broken.
+    const vendorDriverWanted = !missing && !!siliconVendor && isMicrosoftProvider(vendor);
+    const actionable = missing || outdated || vendorDriverWanted;
+    const dev = {
       id: 'demo-' + tokens(name).join('-'),
       name,
       vendor,
@@ -830,24 +902,42 @@ function demoScan() {
       compatIds: [],
       pseudo: false,
       catalogEligible: true,
-      installable: missing || outdated,
+      installable: actionable,
       missing,
       problem: missing,
       problemText: missing ? CM_PROBLEMS[28] : '',
-      needsUpdate: missing || outdated,
-      status: missing ? 'missing' : (outdated ? 'update_available' : 'up_to_date'),
-      update: (missing || outdated)
+      hardwareVendor: siliconVendor || '',
+      hardwareIdentitySource: siliconVendor ? 'hardware ID' : '',
+      driverProviderIsMicrosoft: !missing && isMicrosoftProvider(vendor),
+      vendorDriverWanted,
+      vendorDriverHint: vendorDriverWanted
+        ? siliconVendor + ' ships its own driver for this device — ' +
+          'Windows is currently using the built-in Microsoft driver.'
+        : '',
+      needsUpdate: actionable,
+      status: missing ? 'missing'
+        : (vendorDriverWanted ? 'vendor_available' : (outdated ? 'update_available' : 'up_to_date')),
+      update: actionable
         ? {
-          title: name + ' - Driver Update',
+          title: (vendorDriverWanted ? siliconVendor + ' Corporation - ' + name : name) +
+            ' - Driver Update',
           updateId: 'demo-' + uid(),
           size: 24 * 1024 * 1024,
-          provider: vendor,
+          provider: vendorDriverWanted ? siliconVendor : vendor,
           driverDate: '2026-05-12',
-          source: 'catalog'
+          source: 'catalog',
+          replacesMicrosoft: vendorDriverWanted
         }
         : null
     };
+    dev.gaming = gamingRole(dev);
+    dev.priority = devicePriority(dev);
+    return dev;
   });
+  // Same install order the real pipeline uses: graphics and chipset first.
+  const ordered = sortByInstallPriority(devices);
+  devices.length = 0;
+  devices.push(...ordered);
   const systemInfo = {
     CPUs: [{ Name: 'Intel(R) Core(TM) i7-13700K', Manufacturer: 'GenuineIntel' }],
     GPUs: [{ Name: 'NVIDIA GeForce RTX 4070', PNPDeviceID: 'PCI\\VEN_10DE&DEV_2786', AdapterCompatibility: 'NVIDIA' }],
@@ -893,6 +983,10 @@ function buildSummary(allDevices, extra) {
   const fixable = missing.filter((d) => d.installable !== false);
   const fixableUpdates = updatable.filter((d) => d.installable !== false);
   const manualOnly = devices.filter((d) => d.needsUpdate && d.installable === false);
+  // Devices still on a Microsoft inbox driver where the silicon vendor ships
+  // a real package. Surfaced separately so the UI can say exactly why an
+  // apparently healthy Intel iGPU or chipset device is in the update list.
+  const vendorWaiting = devices.filter((d) => d.vendorDriverWanted && d.installable !== false);
   const runtimeMissing = gamingRuntimes.filter((r) => r.needsInstall);
   const summaryExtra = Object.assign({}, extra || {});
   delete summaryExtra.systemInfo;
@@ -912,6 +1006,7 @@ function buildSummary(allDevices, extra) {
     actionableCount: fixable.length + fixableUpdates.length + runtimeMissing.length,
     driverActionableCount: fixable.length + fixableUpdates.length,
     runtimeMissingCount: runtimeMissing.length,
+    vendorDriverWaitingCount: vendorWaiting.length,
     gamingCount: devices.filter((d) => d.gaming).length,
     gaming,
     gamingRuntimes,
@@ -970,6 +1065,16 @@ function normaliseDevice(d, rawSystemInfo) {
       dev.hardwareIdentityHintOnly = !!identity.hintOnly;
       if (/^(microsoft|unknown|\(standard\))$/i.test(dev.vendor)) dev.vendor = identity.vendor;
     }
+  } else {
+    // Every other device gets the same treatment from its PCI/USB ids alone:
+    // the chipset, NIC, audio and storage silicon vendor is what decides
+    // whether a real vendor package exists for it.
+    const fromId = vendorFromHardwareIds(
+      (dev.hwids || []).concat(dev.compatIds || [], [dev.deviceId || '']));
+    if (fromId && fromId !== 'Microsoft') {
+      dev.hardwareVendor = fromId;
+      dev.hardwareIdentitySource = 'hardware ID';
+    }
   }
 
   // "Missing" means real hardware Windows reports as broken/driverless.
@@ -982,6 +1087,22 @@ function normaliseDevice(d, rawSystemInfo) {
   dev.gaming = role;
   dev.genericDriver = !!(role && role.generic);
   dev.catalogEligible = catalogEligible;
+
+  // ---- Microsoft inbox driver on vendor silicon --------------------------
+  // THE FRESH-WINDOWS CASE: Windows binds its own inbox driver (provider
+  // "Microsoft" / "Microsoft Corporation") to an Intel iGPU, an Intel/AMD
+  // chipset device, a Realtek NIC… The device *works*, so it is neither
+  // "missing" nor the Basic Display Adapter, and the old scanner therefore
+  // called it up to date and never looked for the real Intel/AMD/Realtek
+  // package that is sitting on the catalog. Flag it here so the catalog probe
+  // prioritises it and Update All installs the vendor driver first.
+  dev.driverProviderIsMicrosoft = !dev.missing && isMicrosoftProvider(dev.driverProvider);
+  dev.vendorDriverWanted = !dev.pseudo && catalogEligible && !dev.missing &&
+    dev.driverProviderIsMicrosoft && isSiliconVendor(dev.hardwareVendor);
+  if (dev.vendorDriverWanted) {
+    dev.vendorDriverHint = dev.hardwareVendor + ' ships its own driver for this device — ' +
+      'Windows is currently using the built-in Microsoft driver.';
+  }
 
   // A generic Microsoft GPU/audio/storage stack is just as actionable as a
   // code-28 device when it has a real hardware id. In particular this makes
@@ -996,8 +1117,43 @@ function normaliseDevice(d, rawSystemInfo) {
     }
   }
 
+  dev.priority = devicePriority(dev);
   dev.status = dev.missing ? 'missing' : (dev.genericDriver ? 'generic' : 'up_to_date');
   return dev;
+}
+
+/**
+ * Install order. Lower sorts first.
+ *
+ * The user-visible rule: the display/chipset silicon that everything else
+ * hangs off must be handled BEFORE peripheral odds and ends, and a device
+ * still running the Microsoft inbox driver outranks a merely outdated vendor
+ * driver. On a fresh install that means the Intel iGPU and the chipset go
+ * first, and the Microsoft placeholder never survives the run.
+ */
+const CATEGORY_ORDER = { gpu: 0, chipset: 1, network: 2, storage: 3, audio: 4, input: 5 };
+
+function devicePriority(dev) {
+  const cat = dev.gaming && CATEGORY_ORDER[dev.gaming.key] != null
+    ? CATEGORY_ORDER[dev.gaming.key] : 6;
+  // Class-band: missing driver → generic Microsoft stack → Microsoft inbox
+  // driver over vendor silicon → plain update → everything else.
+  let band = 4;
+  if (dev.missing) band = 0;
+  else if (dev.genericDriver) band = 1;
+  else if (dev.vendorDriverWanted) band = 2;
+  else if (dev.needsUpdate) band = 3;
+  return band * 10 + cat;
+}
+
+/** Order a device list the way it should be installed. */
+function sortByInstallPriority(devices) {
+  return devices.slice().sort((a, b) => {
+    const pa = a.priority == null ? devicePriority(a) : a.priority;
+    const pb = b.priority == null ? devicePriority(b) : b.priority;
+    if (pa !== pb) return pa - pb;
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
 }
 
 /** Drop the software / bookkeeping nodes from a normalised device list. */
@@ -1075,18 +1231,18 @@ function isNewerDriverOffer(offer, device) {
 }
 
 async function attachCatalogOffers(devices) {
-  const candidates = devices
+  const candidates = sortByInstallPriority(devices
     // Missing/generic devices come first. Every physical GPU is also probed,
     // even when Windows Update is disabled, so an already-working display
     // driver can still be compared with the newest compatible catalog offer.
+    //
+    // `vendorDriverWanted` is the fresh-install case: an Intel iGPU or a
+    // chipset device that Windows bound to its own inbox driver. It works, so
+    // nothing else marks it — but the real Intel/AMD/Realtek package is on the
+    // catalog and must be found and preferred.
     .filter((d) => !d.update && d.catalogEligible && !d.pseudo &&
-      (d.missing || d.genericDriver || (d.gaming && d.gaming.key === 'gpu')))
-    .sort((a, b) => {
-      const rank = (d) => d.missing ? 0
-        : (d.genericDriver && d.gaming && d.gaming.key === 'gpu' ? 1
-          : (d.genericDriver ? 2 : 3));
-      return rank(a) - rank(b);
-    })
+      (d.missing || d.genericDriver || d.vendorDriverWanted ||
+        (d.gaming && d.gaming.key === 'gpu'))))
     .slice(0, MAX_CATALOG_SCAN);
   let used = 0;
   for (const dev of candidates) {
@@ -1101,8 +1257,16 @@ async function attachCatalogOffers(devices) {
         break;
       }
     }
+    // A vendor package for silicon currently running the Microsoft inbox
+    // driver is always an improvement, whatever the version numbers say:
+    // Microsoft's inbox version scheme (10.0.x = the Windows build) is not
+    // comparable with Intel's (31.0.101.x), so a plain version comparison
+    // would silently reject the real driver.
+    const vendorReplacesMicrosoft = !!(best && dev.vendorDriverWanted &&
+      offerIsFromVendor(best, dev.hardwareVendor));
     const shouldOffer = best &&
-      (dev.missing || dev.genericDriver || isNewerDriverOffer(best, dev));
+      (dev.missing || dev.genericDriver || vendorReplacesMicrosoft ||
+        isNewerDriverOffer(best, dev));
     if (shouldOffer) {
       used++;
       dev.update = {
@@ -1112,15 +1276,42 @@ async function attachCatalogOffers(devices) {
         size: Number(best.sizeBytes) || 0,
         provider: (best.title || '').split(' - ')[0] || '',
         driverDate: best.lastUpdated || null,
-        source: 'catalog'
+        source: 'catalog',
+        replacesMicrosoft: vendorReplacesMicrosoft
       };
       dev.needsUpdate = true;
       dev.installable = true;
-      if (!dev.missing) dev.status = dev.genericDriver ? 'generic' : 'update_available';
+      if (!dev.missing) {
+        dev.status = dev.genericDriver ? 'generic'
+          : (vendorReplacesMicrosoft ? 'vendor_available' : 'update_available');
+      }
+      dev.priority = devicePriority(dev);
     }
     await sleep(250); // be polite to the catalog
   }
   return used;
+}
+
+/**
+ * Does this catalog offer actually come from the silicon vendor (Intel, AMD,
+ * NVIDIA, Realtek…) rather than being another Microsoft inbox package?
+ * Catalog titles read like "Intel Corporation - Display - 31.0.101.2115".
+ */
+function offerIsFromVendor(offer, vendor) {
+  if (!offer || !vendor) return false;
+  const title = String(offer.title || '');
+  const publisher = title.split(' - ')[0] || title;
+  // Never swap one Microsoft driver for another Microsoft driver.
+  if (isMicrosoftProvider(publisher)) return false;
+  const v = String(vendor).toLowerCase();
+  const alias = {
+    amd: /(amd|advanced micro devices|ati)/i,
+    intel: /intel/i,
+    nvidia: /nvidia/i,
+    realtek: /realtek/i,
+    'qualcomm atheros': /(qualcomm|atheros)/i
+  }[v] || new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  return alias.test(title);
 }
 
 // -------------------------------------------------------------- scan
@@ -1219,12 +1410,13 @@ async function scanDrivers() {
   let catalogUsed = 0;
   try { catalogUsed = await attachCatalogOffers(all); } catch (_) {}
 
-  // Actionable items first so the user sees what matters without scrolling.
-  all.sort((a, b) => {
-    const rank = (d) => (d.missing ? 0 : (d.needsUpdate ? 1 : 2));
-    const r1 = rank(a) - rank(b);
-    return r1 !== 0 ? r1 : a.name.localeCompare(b.name);
-  });
+  // Actionable items first, in the order they should actually be installed:
+  // missing drivers, then the Microsoft generic stacks, then vendor packages
+  // waiting to replace a Microsoft inbox driver (GPU and chipset first), then
+  // ordinary updates.
+  const ordered = sortByInstallPriority(all);
+  all.length = 0;
+  all.push(...ordered);
 
   lastScan = buildSummary(all, {
     mode: 'real',
@@ -1413,10 +1605,15 @@ async function verifyDevices(devs) {
 function driverUpdateIsActive(device, after) {
   if (!after || !after.present || after.error !== 0 || !after.version) return false;
   if (device.missing) return true;
+  // The Microsoft inbox driver was replaced by a real vendor one — the whole
+  // point of the fresh-install case. Version numbers are not comparable
+  // across publishers (Microsoft 10.0.x vs Intel 31.0.101.x), so the provider
+  // change is the signal.
+  if (device.vendorDriverWanted && after.provider && !isMicrosoftProvider(after.provider)) return true;
   const expected = device.update && device.update.version;
   if (expected && compareVersion(after.version, expected) >= 0) return true;
   if (device.version && device.version !== 'None' && compareVersion(after.version, device.version) > 0) return true;
-  if (device.genericDriver && after.provider && !/^microsoft$/i.test(after.provider)) return true;
+  if (device.genericDriver && after.provider && !isMicrosoftProvider(after.provider)) return true;
   return false;
 }
 
@@ -1587,9 +1784,22 @@ async function realUpdateAll(job) {
       catalogEligible: current.catalogEligible || p.catalogEligible,
       update: p.update || null,
       genericDriver: !!p.genericDriver,
+      vendorDriverWanted: !!p.vendorDriverWanted,
+      hardwareVendor: p.hardwareVendor || current.hardwareVendor,
       gaming: p.gaming || current.gaming
     }) : p;
   }).filter((d) => d && d.needsUpdate && d.installable !== false);
+
+  // Install in the order that matters: missing drivers, then Microsoft
+  // generic stacks, then vendor packages replacing a Microsoft inbox driver —
+  // graphics and chipset ahead of peripherals in every band.
+  targets = sortByInstallPriority(targets);
+  const inboxTargets = targets.filter((d) => d.vendorDriverWanted);
+  if (inboxTargets.length) {
+    jlog(job, inboxTargets.length + ' device(s) run the built-in Microsoft driver while the ' +
+      'silicon vendor ships a real one — those are installed first: ' +
+      inboxTargets.slice(0, 4).map((d) => (d.hardwareVendor || '') + ' ' + d.name).join(', '));
+  }
 
   job.driverTotal = targets.length;
   job.runtimeTotal = runtimeTargets.length;
@@ -1793,6 +2003,11 @@ module.exports = {
   normaliseDevice,
   normaliseSystemInfo,
   vendorFromHardwareIds,
+  isMicrosoftProvider,
+  isSiliconVendor,
+  offerIsFromVendor,
+  devicePriority,
+  sortByInstallPriority,
   graphicsIdentity,
   gamingRole,
   gamingReport,

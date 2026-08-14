@@ -138,3 +138,82 @@ test('stripTags normalises entities and whitespace safely', () => {
   assert.strictEqual(stripTags('<b>Realtek &amp; Co.</b>  ltd'), 'Realtek & Co. ltd');
   assert.strictEqual(stripTags('&lt;tag&gt;'), '<tag>');
 });
+
+// ==========================================================================
+// FRESH-WINDOWS REGRESSION — prefer the silicon vendor's package over the
+// Microsoft inbox one. On an Intel i3 6th gen with only integrated graphics
+// the catalog returns BOTH a Microsoft package and the real Intel package for
+// the same hardware ID; picking Microsoft's leaves the machine unchanged.
+// ==========================================================================
+const { offerPublisher, isMicrosoftPublisher, vendorMatchesOffer } =
+  require('../server/drivercatalog');
+
+test('the Intel package beats the Microsoft inbox package for an Intel iGPU', () => {
+  const microsoft = {
+    updateId: 'ms', title: 'Microsoft - Display - 10.0.19041.1',
+    products: 'Windows 10', classification: 'Drivers (Display)',
+    version: '10.0.19041.1', lastUpdated: '6/1/2025'   // deliberately NEWER
+  };
+  const intel = {
+    updateId: 'intel', title: 'Intel Corporation - Display - 31.0.101.2115',
+    products: 'Windows 10', classification: 'Drivers (Display)',
+    version: '31.0.101.2115', lastUpdated: '1/1/2024'
+  };
+  const best = pickBestOffer([microsoft, intel], {
+    name: 'Intel(R) HD Graphics 530',
+    vendor: 'Microsoft Corporation',     // what Windows currently reports
+    hardwareVendor: 'Intel',             // what the PCI id actually says
+    hwids: ['PCI\\VEN_8086&DEV_1912']
+  });
+  assert.strictEqual(best.updateId, 'intel',
+    'a newer Microsoft inbox package must not beat the real Intel driver');
+});
+
+test('the AMD package wins under its full legal name', () => {
+  const microsoft = {
+    updateId: 'ms', title: 'Microsoft - Display - 10.0.19041.1',
+    products: 'Windows 11', classification: 'Drivers (Display)', lastUpdated: '6/1/2025'
+  };
+  const amd = {
+    updateId: 'amd', title: 'Advanced Micro Devices, Inc. - Display - 31.0.14051.5006',
+    products: 'Windows 11', classification: 'Drivers (Display)', lastUpdated: '2/1/2025'
+  };
+  const best = pickBestOffer([microsoft, amd], {
+    name: 'AMD Radeon RX 6600', vendor: 'Microsoft', hardwareVendor: 'AMD', hwids: []
+  });
+  assert.strictEqual(best.updateId, 'amd');
+});
+
+test('with no vendor known a Microsoft package is still an acceptable answer', () => {
+  const microsoft = {
+    updateId: 'ms', title: 'Microsoft - Other hardware - Generic Device',
+    products: 'Windows 11', classification: 'Drivers', lastUpdated: '6/1/2025'
+  };
+  const best = pickBestOffer([microsoft], { name: 'Generic Device', vendor: 'Unknown', hwids: [] });
+  assert.strictEqual(best.updateId, 'ms');
+});
+
+test('deviceQueries searches by silicon vendor, never by "Microsoft"', () => {
+  const qs = deviceQueries({
+    name: 'Intel(R) HD Graphics 530',
+    vendor: 'Microsoft Corporation',
+    hardwareVendor: 'Intel',
+    hwids: ['PCI\\VEN_8086&DEV_1912&SUBSYS_00000000']
+  });
+  assert.strictEqual(qs[0], 'PCI\\VEN_8086&DEV_1912&SUBSYS_00000000', 'hardware ID first');
+  assert.ok(qs.some((q) => /^Intel Intel\(R\) HD Graphics 530$/.test(q)),
+    'an Intel-branded query is issued');
+  assert.ok(!qs.some((q) => /microsoft/i.test(q)),
+    'never search the catalog for a Microsoft-branded package');
+});
+
+test('publisher helpers read catalog titles correctly', () => {
+  assert.strictEqual(offerPublisher({ title: 'Intel Corporation - Display - 31.0.101.2115' }),
+    'Intel Corporation');
+  assert.strictEqual(isMicrosoftPublisher('Microsoft Corporation'), true);
+  assert.strictEqual(isMicrosoftPublisher('Intel Corporation'), false);
+  assert.strictEqual(vendorMatchesOffer('AMD',
+    { title: 'Advanced Micro Devices, Inc. - Display - 1.0' }), true);
+  assert.strictEqual(vendorMatchesOffer('Intel',
+    { title: 'Realtek - MEDIA - 6.0.9616.1' }), false);
+});
