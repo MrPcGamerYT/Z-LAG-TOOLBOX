@@ -348,3 +348,106 @@ test('UWP Start-menu shortcuts never point at WindowsApps', () => {
 test('downloaded payloads are unblocked before they are run', () => {
   assert.match(extra.unblockCommand('C:\\dl\\app.exe'), /Unblock-File/);
 });
+
+// ==========================================================================
+// START MENU LAYOUT
+// --------------------------------------------------------------------------
+// Apps installed through the Store are the USER'S apps, not accessories of
+// this toolbox. Earlier builds nested them all under a "Z-LAG Toolbox" folder
+// in the Start menu, which made every app look like it came from the toolbox
+// and left an empty folder behind. Shortcuts now go straight into Programs.
+// ==========================================================================
+const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
+const installer = require('../server/store/installer');
+
+/**
+ * Run fn with APPDATA pointed at a throwaway directory.
+ *
+ * os.tmpdir() reads TMPDIR/TEMP, which can be unset in constrained CI
+ * environments, so fall back to a local path rather than crashing the suite.
+ */
+function withTempAppData(fn) {
+  const previous = process.env.APPDATA;
+  const base = os.tmpdir() && os.tmpdir() !== 'undefined'
+    ? os.tmpdir()
+    : path.join(__dirname, '..', '.tmp-test');
+  fs.mkdirSync(base, { recursive: true });
+  const tmp = fs.mkdtempSync(path.join(base, 'zlag-startmenu-'));
+  process.env.APPDATA = tmp;
+  try { return fn(tmp); }
+  finally {
+    if (previous === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = previous;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Compare paths without caring which slash the host uses. */
+function normSlashes(p) { return String(p).replace(/\\/g, '/'); }
+
+test('Store shortcuts go directly into Programs, not a vendor subfolder', () => {
+  withTempAppData(() => {
+    const dir = normSlashes(installer.startMenuDir());
+    assert.ok(dir.endsWith('Start Menu/Programs'),
+      'shortcuts must land in Programs, got: ' + dir);
+    assert.ok(!/Z-LAG Toolbox/i.test(dir),
+      'no per-vendor Start menu folder may be created');
+  });
+});
+
+test('legacy Start menu shortcuts are lifted into Programs and the folder removed', () => {
+  withTempAppData(() => {
+    const legacy = installer.legacyStartMenuDir();
+    const target = installer.startMenuDir();
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, 'VLC.lnk'), 'lnk');
+    fs.writeFileSync(path.join(legacy, 'Notepad++.lnk'), 'lnk');
+
+    const r = installer.migrateLegacyStartMenuFolder();
+    assert.equal(r.moved, 2);
+    assert.equal(r.removed, true, 'the empty vendor folder must be deleted');
+    assert.ok(fs.existsSync(path.join(target, 'VLC.lnk')));
+    assert.ok(fs.existsSync(path.join(target, 'Notepad++.lnk')));
+    assert.ok(!fs.existsSync(legacy), 'the Z-LAG Toolbox folder must be gone');
+  });
+});
+
+test('migration never overwrites a shortcut already in Programs', () => {
+  withTempAppData(() => {
+    const legacy = installer.legacyStartMenuDir();
+    const target = installer.startMenuDir();
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, '7-Zip.lnk'), 'ORIGINAL');
+    fs.writeFileSync(path.join(legacy, '7-Zip.lnk'), 'DUPLICATE');
+
+    const r = installer.migrateLegacyStartMenuFolder();
+    assert.equal(fs.readFileSync(path.join(target, '7-Zip.lnk'), 'utf8'), 'ORIGINAL',
+      'an existing user shortcut must win');
+    assert.equal(r.moved, 0);
+    assert.equal(r.skipped, 1);
+    assert.equal(r.removed, true, 'the duplicate is dropped and the folder cleaned up');
+  });
+});
+
+test('migration is a safe no-op when the legacy folder never existed', () => {
+  withTempAppData(() => {
+    const r = installer.migrateLegacyStartMenuFolder();
+    assert.equal(r.moved, 0);
+    assert.equal(r.removed, false);
+  });
+});
+
+test('a non-shortcut file keeps the legacy folder alive rather than deleting data', () => {
+  withTempAppData(() => {
+    const legacy = installer.legacyStartMenuDir();
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, 'notes.txt'), 'user data');
+
+    const r = installer.migrateLegacyStartMenuFolder();
+    assert.equal(r.removed, false, 'never delete a folder that still holds files');
+    assert.ok(fs.existsSync(path.join(legacy, 'notes.txt')), 'unrelated files are left alone');
+  });
+});
