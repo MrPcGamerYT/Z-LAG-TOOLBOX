@@ -1807,6 +1807,18 @@ function scanRuntimeTargets(scan) {
  * several GB) so they reuse the same job plumbing as Update All: the UI polls
  * for progress instead of blocking on one HTTP request.
  */
+/**
+ * Should this run export the driver store first?
+ *
+ * Backup is strictly opt-in: only a real boolean `true` enables it, so a
+ * stringy "false"/"0" arriving from a form or query string cannot silently
+ * turn on a multi-gigabyte export. Kept as a pure function so the policy can
+ * be tested without starting a job that shells out to pnputil.
+ */
+function wantsBackup(opts) {
+  return (opts || {}).backup === true;
+}
+
 function startBackupJob(opts) {
   opts = opts || {};
   const restoreId = opts.restore ? String(opts.restore) : '';
@@ -1968,7 +1980,7 @@ function startUpdateAll(opts) {
     // Backup is OPT-IN. Exporting the whole driver store takes minutes and
     // gigabytes, and doing it silently on every run is not the user's choice
     // to make. The UI offers it as a checkbox and as a standalone action.
-    options: { onlyMissing: !!opts.onlyMissing, backup: opts.backup === true },
+    options: { onlyMissing: !!opts.onlyMissing, backup: wantsBackup(opts) },
     retryOf: opts.retryOf || null
   };
   JOBS.set(job.id, job);
@@ -2501,6 +2513,7 @@ module.exports = {
   scanDrivers,
   startUpdateAll,
   startBackupJob,
+  wantsBackup,
   preflight,
   isElevated,
   backupDrivers,
