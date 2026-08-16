@@ -145,11 +145,90 @@ async function freeDiskBytes() {
  * machine with no display, so this runs once before the first install of any
  * job. `pnputil /export-driver *` is the supported, offline way to do it.
  */
+/** Root folder that holds every driver backup this machine has taken. */
+function backupRoot() {
+  return path.join(process.env.ProgramData || 'C:\\ProgramData',
+    'Z-LAG Toolbox', 'driver-backups');
+}
+
+/** Where driver packages are downloaded to before installation. */
+function driverDownloadRoot() {
+  return muc.downloadRoot();
+}
+
+/**
+ * List every backup taken so far, newest first, with a human size. This is
+ * what the "restore" picker is built on.
+ */
+function listDriverBackups() {
+  const root = backupRoot();
+  let names = [];
+  try { names = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); }
+  catch (_) { return []; }
+  return names.map((name) => {
+    const folder = path.join(root, name);
+    let infCount = 0;
+    let bytes = 0;
+    let created = null;
+    try {
+      created = fs.statSync(folder).mtime.toISOString();
+      for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+        const p = path.join(folder, entry.name);
+        if (entry.isDirectory()) {
+          for (const f of fs.readdirSync(p)) {
+            if (/\.inf$/i.test(f)) infCount++;
+            try { bytes += fs.statSync(path.join(p, f)).size; } catch (_) {}
+          }
+        } else {
+          if (/\.inf$/i.test(entry.name)) infCount++;
+          try { bytes += fs.statSync(p).size; } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    return { id: name, name, folder, created, driverCount: infCount, bytes };
+  }).sort((a, b) => String(b.id).localeCompare(String(a.id)));
+}
+
+/** Resolve a backup id to a real folder, refusing anything outside the root. */
+function resolveBackupFolder(id) {
+  const root = path.resolve(backupRoot());
+  const folder = path.resolve(path.join(root, String(id || '')));
+  if (folder !== root && !folder.startsWith(root + path.sep)) return null;
+  if (folder === root) return null;
+  try { if (!fs.statSync(folder).isDirectory()) return null; } catch (_) { return null; }
+  return folder;
+}
+
+/**
+ * Reinstall every driver in a previously taken backup with pnputil. This is
+ * the manual "load the backup" action — the counterpart to backupDrivers.
+ */
+async function restoreDriverBackup(id, job) {
+  if (!IS_WINDOWS) return { ok: true, demo: true, folder: '' };
+  const folder = resolveBackupFolder(id);
+  if (!folder) return { ok: false, error: 'That backup no longer exists.' };
+  const r = await muc.pnputilInstall(folder, { job });
+  return {
+    ok: r.ok,
+    folder,
+    rebootRequired: !!r.rebootRequired,
+    imported: r.imported == null ? null : r.imported,
+    error: r.ok ? '' : String(r.output || 'pnputil could not reinstall the backup').slice(0, 300)
+  };
+}
+
+/** Delete one backup folder. */
+function deleteDriverBackup(id) {
+  const folder = resolveBackupFolder(id);
+  if (!folder) return { ok: false, error: 'That backup no longer exists.' };
+  try { fs.rmSync(folder, { recursive: true, force: true }); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+}
+
 async function backupDrivers(job) {
   if (!IS_WINDOWS) return { ok: true, demo: true, folder: '' };
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const folder = path.join(process.env.ProgramData || 'C:\\ProgramData',
-    'Z-LAG Toolbox', 'driver-backups', stamp);
+  const folder = path.join(backupRoot(), stamp);
   try { fs.mkdirSync(folder, { recursive: true }); }
   catch (e) { return { ok: false, error: 'Could not create the backup folder: ' + e.message }; }
 
@@ -1656,6 +1735,7 @@ const JOBS = new Map();
 function publicDriverJob(job) {
   return {
     id: job.id,
+    kind: job.kind || 'update',
     status: job.status,
     stage: job.stage,
     percent: job.percent,
@@ -1669,6 +1749,9 @@ function publicDriverJob(job) {
     networkFailed: job.networkFailed,
     rolledBack: job.rolledBack || 0,
     backupFolder: job.backupFolder || '',
+    // Where the packages for this job are being downloaded to, so the UI can
+    // offer an "open folder" action exactly like the Store page does.
+    downloadFolder: job.downloadFolder || '',
     restorePoint: !!job.restorePoint,
     preflight: job.preflight || null,
     needsElevation: !!job.needsElevation,
@@ -1717,6 +1800,132 @@ function scanRuntimeTargets(scan) {
     .map((r) => Object.assign({}, r));
 }
 
+/**
+ * Standalone backup / restore jobs.
+ *
+ * Both are long-running (exporting the driver store can take minutes and
+ * several GB) so they reuse the same job plumbing as Update All: the UI polls
+ * for progress instead of blocking on one HTTP request.
+ */
+function startBackupJob(opts) {
+  opts = opts || {};
+  const restoreId = opts.restore ? String(opts.restore) : '';
+  const job = {
+    id: uid(),
+    status: 'running',
+    stage: restoreId ? 'restoring' : 'backup',
+    kind: restoreId ? 'restore' : 'backup',
+    percent: 5,
+    current: restoreId ? 'Reinstalling drivers from the backup' : 'Exporting installed drivers',
+    total: 1,
+    driverTotal: 0,
+    runtimeTotal: 0,
+    installed: 0,
+    runtimeInstalled: 0,
+    failed: 0,
+    networkFailed: 0,
+    rolledBack: 0,
+    backupFolder: '',
+    downloadFolder: IS_WINDOWS ? muc.downloadRoot() : '',
+    restorePoint: false,
+    preflight: null,
+    needsElevation: false,
+    retryable: false,
+    reboot: false,
+    error: null,
+    mode: IS_WINDOWS ? 'real' : 'demo',
+    items: [],
+    log: [],
+    cancelled: false,
+    child: null,
+    targetSnapshot: [],
+    runtimeSnapshot: [],
+    failedDevices: [],
+    failedRuntimes: [],
+    options: { onlyMissing: false, backup: true },
+    retryOf: null
+  };
+  JOBS.set(job.id, job);
+
+  (async () => {
+    if (!IS_WINDOWS) {
+      jlog(job, '[demo] ' + (restoreId ? 'Restoring drivers from a backup…' : 'Exporting installed drivers…'));
+      await sleep(900);
+      job.percent = 100;
+      job.status = 'done';
+      job.stage = 'done';
+      job.installed = 1;
+      job.backupFolder = restoreId ? '' : path.join(backupRoot(), 'demo-backup');
+      jlog(job, '[demo] Simulation only — run the toolbox on Windows to do this for real.');
+      return;
+    }
+
+    // Both directions need administrator rights: pnputil refuses otherwise.
+    const admin = await isElevated();
+    if (!admin) {
+      job.status = 'error';
+      job.stage = 'error';
+      job.needsElevation = true;
+      job.error = 'Administrator rights are required. Reopen Z-LAG Toolbox with "Run as administrator".';
+      jlog(job, 'ERROR ' + job.error);
+      return;
+    }
+
+    if (restoreId) {
+      jlog(job, 'Reinstalling every driver from backup "' + restoreId + '" with pnputil…');
+      job.percent = 25;
+      const r = await restoreDriverBackup(restoreId, job);
+      job.percent = 100;
+      if (r.rebootRequired) job.reboot = true;
+      if (r.ok) {
+        job.installed = 1;
+        job.backupFolder = r.folder;
+        job.status = 'done';
+        job.stage = 'done';
+        job.items.push({ title: 'Driver backup ' + restoreId, ok: true, engine: 'backup', detail: 'restored' });
+        jlog(job, '✓ Backup restored' + (r.reboot ? ' — restart required' : '') + '.');
+      } else {
+        job.failed = 1;
+        job.status = 'error';
+        job.stage = 'error';
+        job.error = r.error;
+        jlog(job, '✕ ' + r.error);
+      }
+      return;
+    }
+
+    jlog(job, 'Exporting every third-party driver with pnputil /export-driver…');
+    job.percent = 20;
+    const b = await backupDrivers(job);
+    job.percent = 90;
+    if (b.ok) {
+      job.backupFolder = b.folder;
+      job.installed = 1;
+      job.status = 'done';
+      job.stage = 'done';
+      job.percent = 100;
+      job.items.push({
+        title: 'Driver backup', ok: true, engine: 'backup',
+        detail: (b.count || 0) + ' package(s) exported'
+      });
+      jlog(job, '✓ ' + (b.count || 0) + ' driver package(s) exported to ' + b.folder);
+    } else {
+      job.failed = 1;
+      job.status = 'error';
+      job.stage = 'error';
+      job.error = b.error;
+      jlog(job, '✕ ' + b.error);
+    }
+  })().catch((e) => {
+    job.status = 'error';
+    job.stage = 'error';
+    job.error = (e && e.message) || String(e);
+    jlog(job, 'ERROR ' + job.error);
+  });
+
+  return job;
+}
+
 function startUpdateAll(opts) {
   opts = opts || {};
   const targetSnapshot = Array.isArray(opts.targets)
@@ -1740,6 +1949,7 @@ function startUpdateAll(opts) {
     networkFailed: 0,
     rolledBack: 0,
     backupFolder: '',
+    downloadFolder: IS_WINDOWS ? muc.downloadRoot() : '',
     restorePoint: false,
     preflight: null,
     needsElevation: false,
@@ -1755,7 +1965,10 @@ function startUpdateAll(opts) {
     runtimeSnapshot,
     failedDevices: [],
     failedRuntimes: [],
-    options: { onlyMissing: !!opts.onlyMissing, backup: opts.backup !== false },
+    // Backup is OPT-IN. Exporting the whole driver store takes minutes and
+    // gigabytes, and doing it silently on every run is not the user's choice
+    // to make. The UI offers it as a checkbox and as a standalone action.
+    options: { onlyMissing: !!opts.onlyMissing, backup: opts.backup === true },
     retryOf: opts.retryOf || null
   };
   JOBS.set(job.id, job);
@@ -2070,10 +2283,10 @@ async function realUpdateAll(job) {
   // current drivers and drop a restore point first, so there is always a way
   // back. Both are best-effort: a machine with System Restore disabled by
   // policy should not be blocked from fixing a missing NIC driver.
-  if (job.options.backup !== false && !job.cancelled) {
+  if (job.options.backup === true && !job.cancelled) {
     job.stage = 'backup';
     job.current = 'Backing up current drivers';
-    jlog(job, 'Safety net — exporting the current drivers and creating a restore point…');
+    jlog(job, 'Backup requested — exporting the current drivers and creating a restore point…');
     const backup = await backupDrivers(job);
     if (backup.ok) {
       job.backupFolder = backup.folder;
@@ -2087,6 +2300,9 @@ async function realUpdateAll(job) {
       ? '✓ System restore point created.'
       : '! Could not create a restore point (' + rp.detail + ') — continuing.');
     job.percent = 12;
+  } else {
+    jlog(job, 'Backup skipped (not requested). Windows still keeps the previous ' +
+      'driver for each device, and a failed install is rolled back automatically.');
   }
 
   // ---- phase 1a: pure re-enumeration fixes a lot of code 28s -------------
@@ -2284,9 +2500,16 @@ async function demoUpdateAll(job) {
 module.exports = {
   scanDrivers,
   startUpdateAll,
+  startBackupJob,
   preflight,
   isElevated,
   backupDrivers,
+  backupRoot,
+  driverDownloadRoot,
+  listDriverBackups,
+  restoreDriverBackup,
+  deleteDriverBackup,
+  resolveBackupFolder,
   createRestorePoint,
   rollbackDevice,
   retryDriverJob,

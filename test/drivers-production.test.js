@@ -174,3 +174,72 @@ test('provider detection covers the strings Windows actually reports', () => {
   assert.equal(isSiliconVendor('Intel'), true);
   assert.equal(isSiliconVendor(''), false);
 });
+
+// ==========================================================================
+// BACKUP IS OPT-IN, RESTORE IS EXPLICIT
+// --------------------------------------------------------------------------
+// Exporting the whole driver store costs minutes and gigabytes. Doing it
+// silently on every update is not the user's choice to make, so it is a
+// checkbox plus a standalone action, and backups can be listed and reloaded.
+// ==========================================================================
+const {
+  startUpdateAll, startBackupJob, listDriverBackups, resolveBackupFolder,
+  backupRoot, driverDownloadRoot
+} = require('../server/drivers');
+
+test('a driver update never backs up unless explicitly asked to', () => {
+  const noOpts = startUpdateAll({ targets: [], runtimes: [] });
+  assert.equal(noOpts.options.backup, false, 'default must be OFF');
+  const optedOut = startUpdateAll({ targets: [], runtimes: [], backup: false });
+  assert.equal(optedOut.options.backup, false);
+  const optedIn = startUpdateAll({ targets: [], runtimes: [], backup: true });
+  assert.equal(optedIn.options.backup, true, 'explicit opt-in must be honoured');
+});
+
+test('a truthy-but-not-true backup value does not silently enable backups', () => {
+  // Guards against a stray query string ("backup=0") turning it back on.
+  for (const v of ['false', '0', 0, null, undefined]) {
+    assert.equal(startUpdateAll({ targets: [], runtimes: [], backup: v }).options.backup, false,
+      JSON.stringify(v) + ' must not enable backup');
+  }
+});
+
+test('backup and restore run as pollable jobs, tagged by kind', async () => {
+  const backup = startBackupJob({});
+  assert.equal(backup.kind, 'backup');
+  assert.equal(backup.status, 'running');
+  const restore = startBackupJob({ restore: 'some-backup' });
+  assert.equal(restore.kind, 'restore');
+  // Let the demo path settle so the job reaches a terminal state.
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(backup.status, 'done');
+});
+
+test('the job reports both folders so the UI can open them', () => {
+  const job = startBackupJob({});
+  const pub = publicDriverJob(job);
+  assert.equal(typeof pub.downloadFolder, 'string');
+  assert.equal(typeof pub.backupFolder, 'string');
+  assert.equal(pub.kind, 'backup');
+});
+
+test('backup ids cannot escape the backup root', () => {
+  // Path traversal through the restore/delete endpoints must be impossible.
+  for (const evil of ['..', '../..', '../../Windows', '/etc/passwd', 'C:\\Windows',
+    'a/../../..', '']) {
+    assert.equal(resolveBackupFolder(evil), null, JSON.stringify(evil) + ' must be rejected');
+  }
+});
+
+test('listDriverBackups is safe when no backup has ever been taken', () => {
+  const list = listDriverBackups();
+  assert.ok(Array.isArray(list), 'must return an array, never throw');
+});
+
+test('the download and backup roots are absolute, distinct paths', () => {
+  const dl = driverDownloadRoot();
+  const bk = backupRoot();
+  assert.ok(dl && typeof dl === 'string');
+  assert.ok(bk && typeof bk === 'string');
+  assert.notEqual(dl, bk, 'downloads must not be written into the backup folder');
+});

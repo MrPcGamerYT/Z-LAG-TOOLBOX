@@ -1033,6 +1033,29 @@ body.desktop .sidebar {
 .driver-row .badge.game {
   background: rgba(232, 121, 249, 0.16); color: var(--pink); border: 1px solid rgba(232, 121, 249, 0.35);
 }
+/* opt-in backup checkbox under the update button */
+.driver-backup-opt {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+  font-size: 12.5px; color: var(--text-dim); line-height: 1.5;
+}
+.driver-backup-opt input { margin-top: 2px; flex: 0 0 auto; cursor: pointer; }
+.driver-backup-opt .small { display: block; color: var(--text-faint); margin-top: 2px; }
+
+/* backups & files panel */
+.driver-backup-actions { display: flex; gap: 8px; flex-wrap: wrap; flex: 0 0 auto; }
+.driver-backup-list { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.driver-backup-empty { font-size: 12.5px; color: var(--text-faint); line-height: 1.6; }
+.driver-backup-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 13px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.driver-backup-info { flex: 1 1 auto; min-width: 0; }
+.driver-backup-info .nm { font-size: 13px; font-weight: 600; }
+.driver-backup-info .sub { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.driver-backup-btns { display: flex; gap: 6px; flex: 0 0 auto; flex-wrap: wrap; }
+
 .driver-row .tags { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex: 0 0 auto; }
 /* Per-device install button: visible on hover/focus, always on touch. */
 .driver-row .drv-one { opacity: 0; transition: opacity .12s ease; }

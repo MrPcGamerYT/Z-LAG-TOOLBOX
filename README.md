@@ -57,10 +57,17 @@ customization tweaks.
   rights is reported as a clear message up front instead of an install failure
   after a long download. A missing network is a warning only — local repair
   from the Windows driver store still runs offline.
-- **Backup before install.** Every job exports the current third-party drivers
-  with `pnputil /export-driver` to
-  `%ProgramData%\Z-LAG Toolbox\driver-backups\<timestamp>` and creates a system
-  restore point before the first change.
+- **Driver backup and restore, on request.** Backups are never taken
+  automatically — exporting the driver store costs minutes and gigabytes, so
+  it is a deliberate action. Use **Back up now** for a standalone backup, or
+  tick **Back up current drivers first** before an update. Saved backups are
+  listed with their date, driver count and size, and can be reinstalled
+  (**Restore**), opened in Explorer, or deleted. Backups are written to
+  `%ProgramData%\Z-LAG Toolbox\driver-backups\<timestamp>` with
+  `pnputil /export-driver`, and a system restore point is created alongside.
+- **Visible download folder.** Driver packages download to a known location
+  that can be opened from the progress dialog or the backups panel, the same
+  way the Store page exposes app installers.
 - **Post-install health verification with automatic rollback.** A driver that
   installs “successfully” but leaves the device in an error state is detected
   and rolled back automatically, rather than being reported as a success. This

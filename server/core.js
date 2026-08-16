@@ -542,12 +542,43 @@ async function dispatch(method, pathname, query, body) {
   if (method === 'GET' && pathname === '/api/drivers/preflight') {
     return ok({ preflight: await driverCenter.preflight({ checkNetwork: true }) });
   }
+  // ---- driver backups (manual, never automatic) ----
+  // Where packages are downloaded and where backups live, so the UI can show
+  // and open both folders the way the Store page does.
+  if (method === 'GET' && pathname === '/api/drivers/folders') {
+    return ok({
+      downloadFolder: driverCenter.driverDownloadRoot(),
+      backupFolder: driverCenter.backupRoot()
+    });
+  }
+  if (method === 'GET' && pathname === '/api/drivers/backups') {
+    return ok({ backups: driverCenter.listDriverBackups() });
+  }
+  // Take a backup now. Long-running, so it returns a job to poll.
+  if (method === 'POST' && pathname === '/api/drivers/backups') {
+    const job = driverCenter.startBackupJob({});
+    return ok({ jobId: job.id, job: driverCenter.publicDriverJob(job) });
+  }
+  // Load (reinstall) a previously taken backup.
+  if (method === 'POST' && /^\/api\/drivers\/backups\/[^/]+\/restore$/.test(pathname)) {
+    const id = decodeURIComponent(pathname.split('/')[4]);
+    if (!driverCenter.resolveBackupFolder(id)) return fail(404, 'That backup no longer exists');
+    const job = driverCenter.startBackupJob({ restore: id });
+    return ok({ jobId: job.id, job: driverCenter.publicDriverJob(job) });
+  }
+  if (method === 'POST' && /^\/api\/drivers\/backups\/[^/]+\/delete$/.test(pathname)) {
+    const id = decodeURIComponent(pathname.split('/')[4]);
+    const r = driverCenter.deleteDriverBackup(id);
+    if (!r.ok) return fail(404, r.error || 'Could not delete that backup');
+    return ok({ deleted: id });
+  }
+
   // Install / update every missing or outdated driver in one background job.
   if (method === 'POST' && pathname === '/api/drivers/update-all') {
     const job = driverCenter.startUpdateAll({
       onlyMissing: !!body.onlyMissing,
-      // Callers may opt out of the backup, but it is on by default.
-      backup: body.backup !== false,
+      // Backup is opt-in: only taken when the user ticks the box.
+      backup: body.backup === true,
       // Explicit device selection from the UI ("install just this one").
       targets: Array.isArray(body.targets) ? body.targets : undefined,
       runtimes: Array.isArray(body.runtimes) ? body.runtimes : undefined
