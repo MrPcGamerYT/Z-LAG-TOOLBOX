@@ -74,6 +74,21 @@ test('every host-mutating driver helper is guarded by a platform check', () => {
   }
 });
 
+test('no test in this suite starts a real driver job', () => {
+  // The recurring CI failure was a test calling startUpdateAll/startBackupJob,
+  // which on windows-latest runs PowerShell, pnputil /export-driver and
+  // creates a restore point on the build agent. Policy is asserted through
+  // pure functions instead. This check fails on every platform the moment a
+  // job starter is reintroduced here, so the mistake cannot reach CI again.
+  const src = require('fs').readFileSync(__filename, 'utf8');
+  // Strip comments so prose mentioning the names does not trip the check.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  for (const name of ['startUpdateAll', 'startBackupJob', 'scanDrivers', 'restoreDriverBackup']) {
+    assert.ok(!new RegExp('\\b' + name + '\\s*\\(').test(code),
+      name + '() must not be called from tests — it performs real work on Windows');
+  }
+});
+
 test('a job exposes its safety state to the UI', () => {
   const job = {
     id: 'x', status: 'done', stage: 'done', percent: 100, current: '', total: 1,
@@ -183,44 +198,51 @@ test('provider detection covers the strings Windows actually reports', () => {
 // checkbox plus a standalone action, and backups can be listed and reloaded.
 // ==========================================================================
 const {
-  startUpdateAll, startBackupJob, listDriverBackups, resolveBackupFolder,
+  wantsBackup, listDriverBackups, resolveBackupFolder,
   backupRoot, driverDownloadRoot
 } = require('../server/drivers');
 
+/**
+ * NOTE: startUpdateAll and startBackupJob immediately begin real work on
+ * Windows — PowerShell inventory, pnputil /export-driver, and a system
+ * restore point. CI runs on windows-latest, so they must never be called
+ * from a test. The backup policy is asserted through the pure wantsBackup()
+ * decision function instead, which is what those jobs consult.
+ */
 test('a driver update never backs up unless explicitly asked to', () => {
-  const noOpts = startUpdateAll({ targets: [], runtimes: [] });
-  assert.equal(noOpts.options.backup, false, 'default must be OFF');
-  const optedOut = startUpdateAll({ targets: [], runtimes: [], backup: false });
-  assert.equal(optedOut.options.backup, false);
-  const optedIn = startUpdateAll({ targets: [], runtimes: [], backup: true });
-  assert.equal(optedIn.options.backup, true, 'explicit opt-in must be honoured');
+  assert.equal(wantsBackup({}), false, 'default must be OFF');
+  assert.equal(wantsBackup({ targets: [], runtimes: [] }), false);
+  assert.equal(wantsBackup({ backup: false }), false);
+  assert.equal(wantsBackup({ backup: true }), true, 'explicit opt-in must be honoured');
 });
 
 test('a truthy-but-not-true backup value does not silently enable backups', () => {
   // Guards against a stray query string ("backup=0") turning it back on.
-  for (const v of ['false', '0', 0, null, undefined]) {
-    assert.equal(startUpdateAll({ targets: [], runtimes: [], backup: v }).options.backup, false,
+  // Note 'false' and '0' are truthy strings in JS — the strict === true check
+  // is what stops them enabling a multi-gigabyte export.
+  for (const v of ['false', '0', 'true', 1, 0, null, undefined, {}, []]) {
+    assert.equal(wantsBackup({ backup: v }), false,
       JSON.stringify(v) + ' must not enable backup');
   }
 });
 
-test('backup and restore run as pollable jobs, tagged by kind', async () => {
-  const backup = startBackupJob({});
-  assert.equal(backup.kind, 'backup');
-  assert.equal(backup.status, 'running');
-  const restore = startBackupJob({ restore: 'some-backup' });
-  assert.equal(restore.kind, 'restore');
-  // Let the demo path settle so the job reaches a terminal state.
-  await new Promise((r) => setTimeout(r, 1200));
-  assert.equal(backup.status, 'done');
-});
-
-test('the job reports both folders so the UI can open them', () => {
-  const job = startBackupJob({});
-  const pub = publicDriverJob(job);
+test('publicDriverJob reports both folders and the job kind for the UI', () => {
+  // Built as a plain object rather than a started job: no host side effects.
+  const pub = publicDriverJob({
+    id: 'b1', kind: 'backup', status: 'running', stage: 'backup', percent: 5,
+    current: '', total: 1, installed: 0, failed: 0, driverTotal: 0,
+    runtimeTotal: 0, runtimeInstalled: 0, networkFailed: 0, rolledBack: 0,
+    backupFolder: 'C:\\ProgramData\\Z-LAG Toolbox\\driver-backups\\2026-01-01',
+    downloadFolder: 'C:\\Temp\\zlag-toolbox\\drivers',
+    restorePoint: false, preflight: null, needsElevation: false,
+    reboot: false, error: null, mode: 'real', items: [], log: []
+  });
+  assert.equal(pub.kind, 'backup');
   assert.equal(typeof pub.downloadFolder, 'string');
   assert.equal(typeof pub.backupFolder, 'string');
-  assert.equal(pub.kind, 'backup');
+  assert.ok(pub.downloadFolder.length, 'the UI needs a download folder to open');
+  assert.equal(publicDriverJob({ items: [], log: [] }).kind, 'update',
+    'a normal update job defaults to kind "update"');
 });
 
 test('backup ids cannot escape the backup root', () => {
