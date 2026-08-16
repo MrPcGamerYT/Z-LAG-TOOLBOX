@@ -169,6 +169,12 @@ function navigate(page, category = '') {
   $$('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + page));
   if (page === 'dashboard') loadDashboard();
   if (page === 'drivers' && !state.scanDevices.length) renderScanPlaceholder();
+  // Backups and folder paths are independent of the scan, so load them the
+  // first time the Driver Center is opened.
+  if (page === 'drivers' && !state.driverBackupsLoaded) {
+    state.driverBackupsLoaded = true;
+    refreshDriverBackups();
+  }
   if (page === 'customize' || page === 'tweaks' || page === 'gaming') loadSection(page);
   if (page === 'store') loadStore();
   window.scrollTo({ top: 0, behavior: 'auto' });
@@ -521,6 +527,115 @@ $('#btnScan').addEventListener('click', async (e) => {
   renderScan(r);
 });
 
+// ---------------------------------------------------- driver backups & files
+/**
+ * Open a folder through the Electron shell bridge. In the browser dev server
+ * there is no bridge, so show the path instead of failing silently.
+ */
+async function openLocalFolder(pathStr, label) {
+  if (!pathStr) return;
+  if (window.zlag && window.zlag.shell) {
+    const r = await window.zlag.shell.openPath(pathStr);
+    if (r && r.ok === false) toast(r.error || 'Could not open ' + (label || 'the folder'), 'error');
+    return;
+  }
+  toast((label || 'Folder') + ': ' + pathStr, 'info');
+}
+
+/** Fetch the download/backup folder paths and the list of saved backups. */
+async function refreshDriverBackups() {
+  const [folders, list] = await Promise.all([
+    api('/api/drivers/folders'),
+    api('/api/drivers/backups')
+  ]);
+  if (folders && folders.ok) {
+    state.driverFolders = {
+      download: folders.downloadFolder || '',
+      backup: folders.backupFolder || ''
+    };
+    const sub = $('#driverFolderSub');
+    if (sub) {
+      sub.textContent = 'Driver packages download to ' + (folders.downloadFolder || 'a temporary folder') +
+        ' · backups are saved to ' + (folders.backupFolder || 'ProgramData');
+    }
+  }
+  state.driverBackups = (list && list.ok && list.backups) || [];
+  renderDriverBackups();
+}
+
+function renderDriverBackups() {
+  const wrap = $('#driverBackupList');
+  if (!wrap) return;
+  const backups = state.driverBackups || [];
+  if (!backups.length) {
+    wrap.innerHTML = '<div class="driver-backup-empty">No backups yet. ' +
+      '“Back up now” exports every installed driver so you can put it back later.</div>';
+    return;
+  }
+  wrap.innerHTML = backups.map((b) => {
+    const when = b.created ? new Date(b.created).toLocaleString() : b.name;
+    const meta = [
+      b.driverCount ? b.driverCount + ' driver' + (b.driverCount === 1 ? '' : 's') : '',
+      b.bytes ? fmtSize(b.bytes) : ''
+    ].filter(Boolean).join(' · ');
+    return '<div class="driver-backup-row" data-backup-id="' + esc(b.id) + '">' +
+      '<div class="driver-backup-info">' +
+        '<div class="nm">' + esc(when) + '</div>' +
+        '<div class="sub">' + esc(meta || 'empty backup') + '</div>' +
+      '</div>' +
+      '<div class="driver-backup-btns">' +
+        '<button class="btn btn-sm bk-restore">Restore</button>' +
+        '<button class="btn btn-sm btn-ghost bk-open">Open</button>' +
+        '<button class="btn btn-sm btn-ghost bk-delete">Delete</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  wrap.querySelectorAll('.driver-backup-row').forEach((row) => {
+    const id = row.getAttribute('data-backup-id');
+    const backup = backups.find((b) => b.id === id);
+    row.querySelector('.bk-open').onclick = () =>
+      openLocalFolder(backup && backup.folder, 'Backup folder');
+    row.querySelector('.bk-restore').onclick = async () => {
+      // Reinstalling a whole driver set is disruptive — make the user confirm.
+      if (!window.confirm('Reinstall every driver from the backup taken ' +
+        (backup && backup.created ? new Date(backup.created).toLocaleString() : id) +
+        '?\n\nThis replaces current drivers with the saved ones and may require a restart.')) return;
+      const r = await api('/api/drivers/backups/' + encodeURIComponent(id) + '/restore', { method: 'POST' });
+      if (!r.ok || !r.job) { toast(r.error || 'Could not start the restore', 'error'); return; }
+      activateDriverJob(r.job);
+    };
+    row.querySelector('.bk-delete').onclick = async () => {
+      if (!window.confirm('Delete this driver backup permanently?')) return;
+      const r = await api('/api/drivers/backups/' + encodeURIComponent(id) + '/delete', { method: 'POST' });
+      if (!r.ok) { toast(r.error || 'Could not delete the backup', 'error'); return; }
+      toast('Backup deleted', 'ok');
+      refreshDriverBackups();
+    };
+  });
+}
+
+const btnBackupNow = $('#btnBackupNow');
+if (btnBackupNow) {
+  btnBackupNow.addEventListener('click', async () => {
+    btnBackupNow.disabled = true;
+    const r = await api('/api/drivers/backups', { method: 'POST' });
+    btnBackupNow.disabled = false;
+    if (!r.ok || !r.job) { toast(r.error || 'Could not start the backup', 'error'); return; }
+    activateDriverJob(r.job);
+  });
+}
+const btnOpenDriverDownloads = $('#btnOpenDriverDownloads');
+if (btnOpenDriverDownloads) {
+  btnOpenDriverDownloads.addEventListener('click', () =>
+    openLocalFolder((state.driverFolders || {}).download, 'Download folder'));
+}
+const btnOpenBackupFolder = $('#btnOpenBackupFolder');
+if (btnOpenBackupFolder) {
+  btnOpenBackupFolder.addEventListener('click', () =>
+    openLocalFolder((state.driverFolders || {}).backup, 'Backup folder'));
+}
+
 const GSTATE_LABEL = {
   ok: 'ok', outdated: 'update', generic: 'generic', missing: 'missing', absent: 'not found',
   // Working, but on the Microsoft inbox driver while the silicon vendor
@@ -754,7 +869,11 @@ function renderDriverList(reset) {
       const r = await api('/api/drivers/update-all', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targets: [device], runtimes: [] })
+        body: JSON.stringify({
+          targets: [device],
+          runtimes: [],
+          backup: !!($('#optBackupBeforeUpdate') || {}).checked
+        })
       });
       if (!r.ok || !r.job) {
         btn.disabled = false;
@@ -959,8 +1078,12 @@ function activateDriverJob(job) {
 $('#btnUpdateAllDrivers').addEventListener('click', async () => {
   const btn = $('#btnUpdateAllDrivers');
   btn.disabled = true;
+  const backupBox = $('#optBackupBeforeUpdate');
   const r = await api('/api/drivers/update-all', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    // Backup only happens when the user explicitly asked for it.
+    body: JSON.stringify({ backup: !!(backupBox && backupBox.checked) })
   });
   if (!r.ok || !r.job) {
     btn.disabled = false;
@@ -1001,8 +1124,22 @@ async function pollDriverJob() {
 /** Shared completion handling for foreground and background driver jobs. */
 async function finishDriverJob(job) {
   $('#btnUpdateAllDrivers').disabled = false;
+  // A backup or restore changes the saved-backup list; a normal update may
+  // have created one too when the box was ticked.
+  refreshDriverBackups();
   if (announced.has('drv:' + job.id + ':' + job.status)) return;
   announced.add('drv:' + job.id + ':' + job.status);
+
+  // Backup and restore jobs get their own wording — "0 drivers installed" is
+  // a nonsense summary for them.
+  if (job.kind === 'backup' || job.kind === 'restore') {
+    if (job.status === 'done') {
+      toast(job.kind === 'backup' ? 'Driver backup complete' : 'Drivers restored from backup', 'ok');
+    } else {
+      toast(job.error || (job.kind === 'backup' ? 'Backup failed' : 'Restore failed'), 'error');
+    }
+    return;
+  }
 
   if (job.status === 'done') {
     if (job.failed) {
@@ -1120,6 +1257,16 @@ function paintDriverJob(job) {
     job.reboot ? 'restart required' : '',
     job.mode === 'demo' ? 'demo pipeline' : 'no Windows Update needed'
   ].filter(Boolean).join('  ·  '));
+  // Offer the folder the packages are landing in — the backup folder once a
+  // backup exists, otherwise the download folder. Same affordance the Store
+  // job panel gives for app installers.
+  const folderBtn = $('#drvFolder');
+  if (folderBtn) {
+    const target = job.backupFolder || job.downloadFolder || '';
+    folderBtn.style.display = target ? '' : 'none';
+    folderBtn.dataset.target = target;
+    folderBtn.textContent = job.backupFolder ? 'Open backup folder' : 'Open download folder';
+  }
   setNodeWidth($('#drvBar'), (job.percent || 0) + '%');
   setNodeText($('#drvPct'), Math.round(job.percent || 0) + '%');
   setNodeText($('#drvFile'), job.current || (job.status === 'done' ? 'Finished' : '…'));
@@ -1138,6 +1285,10 @@ $('#drvBackground').addEventListener('click', backgroundDriverJob);
 $('#drvBackdrop').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) backgroundDriverJob();
 });
+$('#drvFolder').addEventListener('click', () => {
+  openLocalFolder($('#drvFolder').dataset.target, 'Driver folder');
+});
+
 $('#drvRetry').addEventListener('click', async () => {
   const oldId = state.drvJobId;
   if (!oldId) return;

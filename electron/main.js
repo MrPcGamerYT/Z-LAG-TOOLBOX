@@ -411,6 +411,10 @@ function isAllowedLocalTarget(target) {
   if (!IS_WINDOWS || !path.isAbsolute(String(target || ''))) return false;
   const roots = [
     getCore().downloadsRoot(),
+    // Driver package downloads and driver backups — the Driver Center offers
+    // "open folder" for both, so they must be openable like Store downloads.
+    require('../server/drivers').driverDownloadRoot(),
+    require('../server/drivers').backupRoot(),
     process.env.ZLAG_PROGRAMS ||
       path.join(process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'),
         'Programs', 'Z-LAG Toolbox'),

@@ -235,6 +235,34 @@
               <svg class="ico" aria-hidden="true"><use href="#i-download" /></svg> Update drivers &amp; gaming runtimes
             </button>
           </div>
+          <label class="driver-backup-opt" for="optBackupBeforeUpdate">
+            <input type="checkbox" id="optBackupBeforeUpdate" />
+            <span>Back up current drivers first
+              <span class="small">Exports every installed driver and creates a restore point before installing. Takes a few minutes and several GB.</span>
+            </span>
+          </label>
+        </div>
+
+        <!-- Driver backups & folders — manual, never automatic -->
+        <div class="glass card-pad" id="driverBackupPanel" style="margin-bottom:18px">
+          <div class="driver-action">
+            <div class="driver-action-text">
+              <div class="driver-action-title">Driver backups &amp; files</div>
+              <div class="driver-action-sub" id="driverFolderSub">Back up your drivers before making changes, or reinstall a previous backup.</div>
+            </div>
+            <div class="driver-backup-actions">
+              <button class="btn" id="btnBackupNow">
+                <svg class="ico" aria-hidden="true"><use href="#i-download" /></svg> Back up now
+              </button>
+              <button class="btn btn-ghost" id="btnOpenDriverDownloads">
+                <svg class="ico" aria-hidden="true"><use href="#i-folder" /></svg> Download folder
+              </button>
+              <button class="btn btn-ghost" id="btnOpenBackupFolder">
+                <svg class="ico" aria-hidden="true"><use href="#i-folder" /></svg> Backup folder
+              </button>
+            </div>
+          </div>
+          <div id="driverBackupList" class="driver-backup-list"></div>
         </div>
 
         <div class="glass card-pad" id="scanArea">
@@ -402,6 +430,7 @@
       <div class="log-box" id="drvLog"></div>
       <div class="actions">
         <span class="job-hint" id="drvHint">Closing keeps the driver update running in the background.</span>
+        <button class="btn btn-sm btn-ghost" id="drvFolder" style="display:none"><svg class="ico" aria-hidden="true"><use href="#i-folder" /></svg> Open folder</button>
         <button class="btn btn-primary btn-sm" id="drvRetry" style="display:none"><svg class="ico" aria-hidden="true"><use href="#i-undo" /></svg> Retry failed downloads</button>
         <button class="btn btn-danger btn-sm" id="drvCancel">Cancel</button>
         <button class="btn" id="drvBackground"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg> Keep in background</button>
