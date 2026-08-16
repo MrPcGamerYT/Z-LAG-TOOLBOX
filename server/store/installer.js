@@ -212,7 +212,26 @@ function programsRoot() {
   return path.join(base, 'Programs', 'Z-LAG Toolbox');
 }
 
+/**
+ * Where app shortcuts go in the Start menu.
+ *
+ * Straight into Programs, NOT a "Z-LAG Toolbox" subfolder. Apps installed
+ * through the Store are the user's apps, not accessories of this toolbox, so
+ * they belong next to everything else they installed — that is also where
+ * Windows' own installers put them, and where Search expects to find them.
+ * Grouping them under a vendor folder made every installed app look like it
+ * came from Z-LAG Toolbox and left an empty folder behind after uninstalls.
+ */
 function startMenuDir() {
+  const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+  return path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+}
+
+/**
+ * The legacy per-vendor folder previous builds created. Only used to clean it
+ * up; nothing is ever written here again.
+ */
+function legacyStartMenuDir() {
   const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
   return path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Z-LAG Toolbox');
 }
@@ -233,6 +252,47 @@ function shortcutDirs() {
   const dirs = [startMenuDir()];
   if (process.env.ZLAG_DESKTOP_SHORTCUTS === '1') dirs.push(desktopDir());
   return dirs;
+}
+
+/**
+ * Move shortcuts out of the old "Programs\Z-LAG Toolbox" folder and delete it.
+ *
+ * Earlier builds nested every installed app in that folder. Simply changing
+ * the destination would strand those shortcuts in a folder the user does not
+ * want, so migrate once: move each .lnk up into Programs (never overwriting a
+ * shortcut that is already there), then remove the folder if it is empty.
+ *
+ * Best-effort by design — a locked file or missing folder must never break an
+ * install. Returns a small summary for logging and tests.
+ */
+function migrateLegacyStartMenuFolder() {
+  const legacy = legacyStartMenuDir();
+  const target = startMenuDir();
+  const result = { moved: 0, skipped: 0, removed: false, folder: legacy };
+  let entries;
+  try { entries = fs.readdirSync(legacy, { withFileTypes: true }); }
+  catch (_) { return result; }            // nothing to migrate
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !/\.lnk$/i.test(entry.name)) { result.skipped++; continue; }
+    const from = path.join(legacy, entry.name);
+    const to = path.join(target, entry.name);
+    try {
+      // Never clobber a shortcut the user already has in Programs.
+      if (fs.existsSync(to)) { fs.rmSync(from, { force: true }); result.skipped++; continue; }
+      fs.mkdirSync(target, { recursive: true });
+      fs.renameSync(from, to);
+      result.moved++;
+    } catch (_) { result.skipped++; }
+  }
+
+  try {
+    if (!fs.readdirSync(legacy).length) {
+      fs.rmdirSync(legacy);
+      result.removed = true;
+    }
+  } catch (_) {}
+  return result;
 }
 
 function safeFolder(name) {
@@ -802,6 +862,9 @@ module.exports = {
   needsElevation,
   findMainExe,
   programsRoot,
+  startMenuDir,
+  legacyStartMenuDir,
+  migrateLegacyStartMenuFolder,
   __test: {
     splitSwitches, codeMeaning, safeFolder, shortcutCommand,
     servicePreflightCommand, parseServiceReport, repairServiceCommand,

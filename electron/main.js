@@ -409,6 +409,7 @@ ipcMain.handle('zlag:env', () => ({
 
 function isAllowedLocalTarget(target) {
   if (!IS_WINDOWS || !path.isAbsolute(String(target || ''))) return false;
+  // Folders we own: the target may be the folder itself or anything inside it.
   const roots = [
     getCore().downloadsRoot(),
     // Driver package downloads and driver backups — the Driver Center offers
@@ -417,11 +418,18 @@ function isAllowedLocalTarget(target) {
     require('../server/drivers').backupRoot(),
     process.env.ZLAG_PROGRAMS ||
       path.join(process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'),
-        'Programs', 'Z-LAG Toolbox'),
+        'Programs', 'Z-LAG Toolbox')
+  ];
+  // Shared folders we do NOT own. Store shortcuts now live directly in the
+  // user's Start menu, and "open folder" must still work — but granting the
+  // whole tree would let the renderer launch ANY shortcut on the machine.
+  // Exact match only: the folder can be opened, its contents cannot be run.
+  const exactRoots = [
     path.join(process.env.APPDATA || app.getPath('appData'),
-      'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Z-LAG Toolbox')
+      'Microsoft', 'Windows', 'Start Menu', 'Programs')
   ];
   const candidate = path.resolve(String(target)).toLowerCase();
+  if (exactRoots.some((root) => candidate === path.resolve(root).toLowerCase())) return true;
   return roots.some((root) => {
     const allowed = path.resolve(root).toLowerCase();
     return candidate === allowed || candidate.startsWith(allowed + path.sep.toLowerCase());
@@ -534,6 +542,19 @@ async function bootstrap() {
   // session boundary even if future UI content is compromised.
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+
+  // Earlier builds nested every Store-installed app under a "Z-LAG Toolbox"
+  // folder in the Start menu. Apps belong directly in Programs, so lift any
+  // shortcuts left behind by those builds and drop the empty folder.
+  if (IS_WINDOWS) {
+    try {
+      const moved = require('../server/store/installer').migrateLegacyStartMenuFolder();
+      if (moved.moved || moved.removed) {
+        log('start menu: migrated ' + moved.moved + ' shortcut(s) out of the ' +
+          'legacy Z-LAG Toolbox folder' + (moved.removed ? ' and removed it' : ''));
+      }
+    } catch (e) { log('start menu migration skipped: ' + e.message); }
+  }
 
   // The window is created FIRST so the user sees the app immediately; repair
   // and release checks are background work and can never delay first paint.
