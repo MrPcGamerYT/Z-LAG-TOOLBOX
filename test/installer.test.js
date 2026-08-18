@@ -338,11 +338,32 @@ test('a healthy package is not inconclusive', () => {
 
 const { __test: extra } = require('../server/store/installer');
 
-test('UWP Start-menu shortcuts never point at WindowsApps', () => {
-  const cmd = extra.uwpShortcutCommand('SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify', 'C:\\Users\\me\\App.lnk');
-  assert.match(cmd, /explorer\.exe/);
-  assert.match(cmd, /shell:AppsFolder/);
-  assert.ok(!/WindowsApps/.test(cmd), cmd);
+test('no UWP shortcut writer exists — Windows owns that Start-menu entry', () => {
+  // Windows publishes an All-apps entry for every installed UWP package, so
+  // writing our own .lnk produced a duplicate for every Store app, and the
+  // duplicate showed a blank document icon (a bare explorer.exe TargetPath
+  // gives the shell no icon source). The writer is gone; this pins it out.
+  assert.equal(extra.uwpShortcutCommand, undefined,
+    'reintroducing a UWP shortcut writer would duplicate every Store app');
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'server', 'store', 'installer.js'), 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/shell:AppsFolder[^']*'\s*\+\s*\w+\s*\)\s*;[\s\S]{0,120}CreateShortcut/.test(code),
+    'no code path may build a .lnk that targets shell:AppsFolder');
+});
+
+test('a launchable UWP install still exposes shell:AppsFolder for the Launch button', () => {
+  // Removing the shortcut must not remove the ability to launch the app.
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'server', 'store', 'installer.js'), 'utf8');
+  assert.match(src, /rec\.launch\s*=\s*info\.appId\s*\?\s*'shell:AppsFolder\\\\'/,
+    'rec.launch must still carry the AppsFolder identity');
+});
+
+test('created shortcuts set an explicit icon so they never render as documents', () => {
+  const cmd = extra.shortcutCommand('C:\\Apps\\VLC\\vlc.exe', 'C:\\Users\\me\\VLC.lnk', 'C:\\Apps\\VLC');
+  assert.match(cmd, /IconLocation/, 'an icon must be set explicitly');
+  assert.match(cmd, /vlc\.exe,0/, 'the icon should come from the target executable');
 });
 
 test('downloaded payloads are unblocked before they are run', () => {
@@ -449,5 +470,60 @@ test('a non-shortcut file keeps the legacy folder alive rather than deleting dat
     const r = installer.migrateLegacyStartMenuFolder();
     assert.equal(r.removed, false, 'never delete a folder that still holds files');
     assert.ok(fs.existsSync(path.join(legacy, 'notes.txt')), 'unrelated files are left alone');
+  });
+});
+
+// --------------------------------------------------------------------------
+// Duplicate UWP shortcut cleanup
+// Earlier builds wrote a second .lnk for every UWP app (targeting
+// explorer.exe + shell:AppsFolder) beside the entry Windows publishes itself.
+// It rendered with a blank document icon. These pin the one-time cleanup.
+// --------------------------------------------------------------------------
+const utf16 = (s) => Buffer.from(s, 'utf16le');
+const LNK_MAGIC = Buffer.from([0x4C, 0, 0, 0]);
+
+test('duplicate UWP shortcuts are removed, real app shortcuts are not', () => {
+  withTempAppData(() => {
+    const dir = installer.startMenuDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'Spotify.lnk'), Buffer.concat([LNK_MAGIC,
+      utf16('C:\\Windows\\explorer.exe'),
+      utf16('shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpd!Spotify')]));
+    fs.writeFileSync(path.join(dir, 'VLC.lnk'), Buffer.concat([LNK_MAGIC,
+      utf16('C:\\Program Files\\VideoLAN\\VLC\\vlc.exe')]));
+
+    const r = installer.cleanupDuplicateUwpShortcuts();
+    assert.equal(r.removed, 1);
+    assert.ok(!fs.existsSync(path.join(dir, 'Spotify.lnk')), 'the duplicate must go');
+    assert.ok(fs.existsSync(path.join(dir, 'VLC.lnk')), 'a real shortcut must stay');
+  });
+});
+
+test('an explorer shortcut to an ordinary folder is never mistaken for a duplicate', () => {
+  withTempAppData(() => {
+    const dir = installer.startMenuDir();
+    fs.mkdirSync(dir, { recursive: true });
+    // Targets explorer.exe but has no AppsFolder argument — a normal shortcut.
+    fs.writeFileSync(path.join(dir, 'Documents.lnk'), Buffer.concat([LNK_MAGIC,
+      utf16('C:\\Windows\\explorer.exe'), utf16('C:\\Users\\me\\Documents')]));
+
+    const r = installer.cleanupDuplicateUwpShortcuts();
+    assert.equal(r.removed, 0, 'both markers are required before deleting');
+    assert.ok(fs.existsSync(path.join(dir, 'Documents.lnk')));
+  });
+});
+
+test('cleanup ignores non-shortcut files and a missing folder', () => {
+  withTempAppData(() => {
+    const dir = installer.startMenuDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'readme.txt'), 'shell:AppsFolder explorer.exe');
+    const r = installer.cleanupDuplicateUwpShortcuts();
+    assert.equal(r.removed, 0, 'only .lnk files are considered');
+    assert.ok(fs.existsSync(path.join(dir, 'readme.txt')));
+  });
+  // No Start menu folder at all must be a silent no-op.
+  withTempAppData(() => {
+    assert.equal(installer.cleanupDuplicateUwpShortcuts().removed, 0);
   });
 });

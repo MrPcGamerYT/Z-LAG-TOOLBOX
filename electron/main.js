@@ -548,10 +548,17 @@ async function bootstrap() {
   // shortcuts left behind by those builds and drop the empty folder.
   if (IS_WINDOWS) {
     try {
-      const moved = require('../server/store/installer').migrateLegacyStartMenuFolder();
+      const installer = require('../server/store/installer');
+      const moved = installer.migrateLegacyStartMenuFolder();
       if (moved.moved || moved.removed) {
         log('start menu: migrated ' + moved.moved + ' shortcut(s) out of the ' +
           'legacy Z-LAG Toolbox folder' + (moved.removed ? ' and removed it' : ''));
+      }
+      // Earlier builds also wrote a second, icon-less .lnk for every UWP app
+      // alongside the entry Windows publishes itself. Clear those out.
+      const dupes = installer.cleanupDuplicateUwpShortcuts();
+      if (dupes.removed) {
+        log('start menu: removed ' + dupes.removed + ' duplicate UWP shortcut(s)');
       }
     } catch (e) { log('start menu migration skipped: ' + e.message); }
   }
