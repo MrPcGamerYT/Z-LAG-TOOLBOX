@@ -295,6 +295,42 @@ function migrateLegacyStartMenuFolder() {
   return result;
 }
 
+/**
+ * Delete the duplicate UWP shortcuts earlier builds left in the Start menu.
+ *
+ * Those .lnk files target explorer.exe with a shell:AppsFolder argument, so
+ * they sit next to the real entry Windows publishes and render with a blank
+ * document icon. They are identifiable with certainty — a normal app shortcut
+ * never points at explorer.exe with an AppsFolder argument — so they can be
+ * removed safely.
+ *
+ * Reads each .lnk as bytes and looks for the marker rather than shelling out
+ * to PowerShell per file: a Start menu can hold hundreds of shortcuts.
+ */
+function cleanupDuplicateUwpShortcuts() {
+  const dir = startMenuDir();
+  const result = { removed: 0, inspected: 0, folder: dir };
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+  catch (_) { return result; }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !/\.lnk$/i.test(entry.name)) continue;
+    const file = path.join(dir, entry.name);
+    try {
+      result.inspected++;
+      // .lnk stores strings as UTF-16LE; latin1 still exposes the ASCII run
+      // with NUL padding, so strip NULs before matching.
+      const raw = fs.readFileSync(file).toString('latin1').replace(/\0/g, '');
+      if (/shell:AppsFolder/i.test(raw) && /explorer\.exe/i.test(raw)) {
+        fs.rmSync(file, { force: true });
+        result.removed++;
+      }
+    } catch (_) { /* locked or unreadable — leave it alone */ }
+  }
+  return result;
+}
+
 function safeFolder(name) {
   return String(name || 'App').replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ')
     .replace(/[.\s]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 90) || 'App';
@@ -310,25 +346,19 @@ function shortcutCommand(target, linkPath, workDir) {
     '$s = $w.CreateShortcut(' + psQuote(linkPath) + ');',
     '$s.TargetPath = ' + psQuote(target) + ';',
     '$s.WorkingDirectory = ' + psQuote(workDir || path.dirname(target)) + ';',
+    // Point the icon at the executable itself. Without this the shell falls
+    // back to a generic document icon whenever it cannot infer one.
+    '$s.IconLocation = ' + psQuote(target + ',0') + ';',
     '$s.Save();'
   ].join(' ');
 }
 
-/**
- * UWP apps live under WindowsApps — a folder users cannot open (that is the
- * "cannot access the specified device, path, or file" dialog). The Start
- * menu entry must target explorer.exe with shell:AppsFolder\\Family!AppId.
- */
-function uwpShortcutCommand(appUserModelId, linkPath) {
-  return [
-    '$w = New-Object -ComObject WScript.Shell;',
-    '$s = $w.CreateShortcut(' + psQuote(linkPath) + ');',
-    '$s.TargetPath = "explorer.exe";',
-    '$s.Arguments = ' + psQuote('shell:AppsFolder\\' + appUserModelId) + ';',
-    '$s.WindowStyle = 1;',
-    '$s.Save();'
-  ].join(' ');
-}
+// NOTE: there is deliberately no uwpShortcutCommand() any more. Windows
+// already publishes an All-apps entry for every installed UWP package, so
+// creating a second .lnk that targets explorer.exe duplicated every Store app
+// in the Start menu — and the duplicate showed a blank document icon, because
+// a bare "explorer.exe" TargetPath gives the shell no icon to read. UWP apps
+// are launched through rec.launch (shell:AppsFolder\<family>!<appId>) instead.
 
 function unblockCommand(filePath) {
   return 'try { Unblock-File -LiteralPath ' + psQuote(filePath) + ' -ErrorAction SilentlyContinue } catch {}';
@@ -559,25 +589,24 @@ function verifyUwpCommand(familyOrName) {
 }
 
 /**
- * Wire launch + Start-menu shortcuts for a UWP app.
- * Never hand WindowsApps back as a folder — users cannot open it and Windows
- * shows "cannot access the specified device, path, or file".
+ * Wire launch for a UWP app.
+ *
+ * We deliberately do NOT create a Start-menu .lnk here. Windows registers an
+ * All-apps entry for every UWP package at install time (unless its manifest
+ * opts out with AppListEntry="none"), so writing our own produced TWO entries
+ * per app: the real one with the app's icon, and ours showing a blank
+ * document icon because a bare "explorer.exe" TargetPath does not resolve to
+ * an icon source.
+ *
+ * `rec.launch` still carries shell:AppsFolder\<family>!<appId>, which is what
+ * the in-app Launch button uses — that path never needed a shortcut file.
  */
 async function attachUwpLaunch(rec, info, appName) {
   rec.appId = info.appId || null;
   rec.launch = info.appId ? 'shell:AppsFolder\\' + info.appId : null;
   rec.installFolder = startMenuDir();
+  // Windows owns the Start-menu entry for UWP packages; nothing to add.
   rec.shortcuts = rec.shortcuts || [];
-  if (!info.appId) return;
-  const lnkName = safeFolder(appName || info.appId.split('!')[0]) + '.lnk';
-  for (const dir of shortcutDirs()) {
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      const link = path.join(dir, lnkName);
-      const s = await runPwsh(uwpShortcutCommand(info.appId, link), 60000);
-      if (s.ok) rec.shortcuts.push(link);
-    } catch (_) {}
-  }
 }
 
 function parseUwpVerify(stdout) {
@@ -865,10 +894,11 @@ module.exports = {
   startMenuDir,
   legacyStartMenuDir,
   migrateLegacyStartMenuFolder,
+  cleanupDuplicateUwpShortcuts,
   __test: {
     splitSwitches, codeMeaning, safeFolder, shortcutCommand,
     servicePreflightCommand, parseServiceReport, repairServiceCommand,
     sideloadCheckCommand, verifyUwpCommand, parseUwpVerify, UWP_SERVICES,
-    uwpShortcutCommand, unblockCommand
+    unblockCommand
   }
 };
